@@ -4,38 +4,16 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Five Nights at Freddy's 3</title>
-    <link rel="icon" href="favicon.ico" />
     <style>
-        html { display: block; -webkit-user-select: none; user-select: none; overflow: hidden; height: 100%; }
+        html { display: block; background: #000; -webkit-user-select: none; user-select: none; overflow: hidden; height: 100%; }
         body { position: relative; background-color: black; display: flex; align-items: center; justify-content: center; margin: 0; height: 100%; color: white; font-family: monospace; }
-        canvas { display: none; user-select: none; }
-        
-        .loader { position: absolute; display: flex; flex-direction: column; align-items: center; z-index: 1; text-align: center; width: 85vw; }
-        .loader h1 { margin: 0; font-size: 5vw; }
-        #bar { margin: 10px 0; border: white solid 1px; width: 0%; transition: width 0.2s; height: 2px; }
-        #stage { font-size: 1.4vw; color: #aaa; }
-
-        /* The Play Button Styling */
-        #play-zone { 
-            display: none; 
-            position: absolute; 
-            z-index: 10; 
-            text-align: center; 
-        }
-        #play-button {
-            background: none;
-            border: 2px solid white;
-            color: white;
-            padding: 15px 40px;
-            font-size: 24px;
-            font-family: monospace;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        #play-button:hover {
-            background: white;
-            color: black;
-        }
+        canvas { display: none; }
+        .loader { position: absolute; display: flex; flex-direction: column; align-items: center; z-index: 5; text-align: center; width: 85vw; }
+        #bar-container { width: 100%; border: 1px solid #333; height: 4px; margin: 10px 0; }
+        #bar { background: white; width: 0%; height: 100%; transition: width 0.1s; }
+        #play-zone { display: none; z-index: 10; text-align: center; }
+        #play-button { background: #111; border: 2px solid white; color: white; padding: 20px 50px; font-size: 24px; cursor: pointer; }
+        #play-button:hover { background: white; color: black; }
     </style>
 </head>
 <body>
@@ -43,35 +21,19 @@
     
     <div class="loader" id="loader-ui">
         <h1 id="percentage">0%</h1>
-        <div id="bar"></div>
-        <h2 id="stage">INITIALIZING...</h2>
+        <div id="bar-container"><div id="bar"></div></div>
+        <h2 id="stage" style="font-size: 12px; color: #666;">INITIALIZING...</h2>
     </div>
 
     <div id="play-zone">
         <button id="play-button">START GAME</button>
-        <p style="margin-top:10px; color:#666;">(Activates Audio)</p>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
     <script>
         const totalParts = 20;
-        const map = new Map();
-
-        // 1. Image Interceptor
-        const OriginalImage = window.Image;
-        window.Image = function() {
-            const img = new OriginalImage();
-            Object.defineProperty(img, 'src', {
-                set(url) {
-                    const name = url.toString().split('/').pop();
-                    if (map.has(name)) this.setAttribute('src', map.get(name));
-                    else this.setAttribute('src', url);
-                },
-                get() { return this.getAttribute('src'); }
-            });
-            return img;
-        };
+        const assetMap = new Map();
 
         function updateProgress(text, percent) {
             document.getElementById('percentage').innerText = percent + '%';
@@ -79,79 +41,101 @@
             document.getElementById('stage').innerText = text.toUpperCase();
         }
 
+        // --- THE AUDIO FIX: MIME TYPE DETECTION ---
+        function getMimeType(name) {
+            if (name.endsWith('.mp3')) return 'audio/mpeg';
+            if (name.endsWith('.ogg')) return 'audio/ogg';
+            if (name.endsWith('.wav')) return 'audio/wav';
+            if (name.endsWith('.m4a')) return 'audio/mp4';
+            if (name.endsWith('.png')) return 'image/png';
+            return 'application/octet-stream';
+        }
+
         async function start() {
             try {
                 let chunks = [];
                 for (let i = 1; i <= totalParts; i++) {
-                    updateProgress(`FETCHING DATA (PART ${i})...`, Math.floor((i / totalParts) * 40));
-                    const response = await fetch(`resources.zip.part${i}`);
-                    if (!response.ok) throw new Error(`Missing Part ${i}`);
-                    chunks.push(await response.arrayBuffer());
+                    updateProgress(`LOADING PART ${i}`, Math.floor((i / totalParts) * 40));
+                    const res = await fetch(`resources.zip.part${i}`);
+                    if (!res.ok) throw new Error("Part fail");
+                    chunks.push(await res.arrayBuffer());
                 }
 
-                updateProgress("UNPACKING ASSETS...", 50);
+                updateProgress("EXTRACTING", 50);
                 const zip = await JSZip.loadAsync(new Blob(chunks));
                 const files = Object.keys(zip.files);
                 
                 for (let i = 0; i < files.length; i++) {
                     const file = zip.files[files[i]];
                     if (!file.dir) {
-                        const fileName = files[i].split('/').pop();
+                        const name = files[i].split('/').pop();
                         const data = await file.async("uint8array");
-                        const blob = new Blob([data], { type: "application/octet-stream" });
-                        map.set(fileName, URL.createObjectURL(blob));
+                        const blob = new Blob([data], { type: getMimeType(name) });
+                        assetMap.set(name, URL.createObjectURL(blob));
                     }
-                    updateProgress("PREPARING MEMORY...", 50 + Math.floor((i / files.length) * 45));
+                    updateProgress("MAPPING", 50 + Math.floor((i / files.length) * 45));
                 }
 
-                // 2. XHR Interceptor
-                const originalOpen = XMLHttpRequest.prototype.open;
-                XMLHttpRequest.prototype.open = function(method, url) {
-                    const name = url.toString().split('/').pop();
-                    if (map.has(name)) url = map.get(name);
-                    return originalOpen.apply(this, [method, url]);
-                };
-
-                // 3. Show Play Button instead of auto-launching
-                updateProgress("READY", 100);
-                setTimeout(() => {
-                    document.getElementById('loader-ui').style.display = 'none';
-                    document.getElementById('play-zone').style.display = 'block';
-                }, 500);
-
-                document.getElementById('play-button').onclick = function() {
-                    launchGame();
-                };
+                // Show button
+                document.getElementById('loader-ui').style.display = 'none';
+                document.getElementById('play-zone').style.display = 'block';
 
             } catch (err) {
-                document.getElementById('stage').innerHTML = `<span style="color:red">ERROR: ${err.message}</span>`;
+                document.getElementById('stage').innerText = "FATAL ERROR: " + err.message;
             }
         }
 
-        function launchGame() {
-            // Hide the play button
+        // --- GLOBAL INTERCEPTORS ---
+        const originalOpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function(method, url) {
+            const name = url.toString().split('/').pop();
+            if (assetMap.has(name)) url = assetMap.get(name);
+            return originalOpen.apply(this, [method, url]);
+        };
+
+        const OriginalImage = window.Image;
+        window.Image = function() {
+            const img = new OriginalImage();
+            const setter = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src').set;
+            Object.defineProperty(img, 'src', {
+                set: function(url) {
+                    const name = url.toString().split('/').pop();
+                    if (assetMap.has(name)) setter.call(this, assetMap.get(name));
+                    else setter.call(this, url);
+                }
+            });
+            return img;
+        };
+
+        document.getElementById('play-button').onclick = function() {
             document.getElementById('play-zone').style.display = 'none';
             document.getElementById('MMFCanvas').style.display = 'block';
 
-            // --- AGGRESSIVE AUDIO ACTIVATION ---
-            const AC = window.AudioContext || window.webkitAudioContext;
-            if (AC) {
-                const actx = new AC();
-                actx.resume(); // Wake up the generic context
-            }
-            // If the runtime already initialized a context, resume it
-            if (window.activeAudioContext) window.activeAudioContext.resume();
+            // Resuming multiple possible contexts
+            const resume = () => {
+                const AC = window.AudioContext || window.webkitAudioContext;
+                if (AC) {
+                    const t = new AC();
+                    t.resume();
+                }
+                if (window.activeAudioContext) window.activeAudioContext.resume();
+            };
+            resume();
 
-            // Load and Run
             const script = document.createElement('script');
             script.src = 'Runtime.js';
             script.onload = () => {
-                window.resourcesPath = ""; 
-                const cchFile = Array.from(map.keys()).find(f => f.toLowerCase().endsWith('.cch'));
-                new Runtime("MMFCanvas", cchFile);
+                window.resourcesPath = "";
+                // Force search for the CCH
+                const cch = Array.from(assetMap.keys()).find(f => f.toLowerCase().endsWith('.cch')) || "fnaf3.cch";
+                
+                // Final override: inject assetMap into the Runtime if it has a hook
+                if (window.Runtime) {
+                    new Runtime("MMFCanvas", cch);
+                }
             };
             document.head.appendChild(script);
-        }
+        };
 
         window.onload = start;
     </script>
