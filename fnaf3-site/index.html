@@ -11,8 +11,7 @@
         canvas { display: none; user-select: none; }
         .loader { position: absolute; display: flex; flex-direction: column; align-items: center; z-index: 1; text-align: center; width: 85vw; }
         .loader h1 { margin: 0; font-size: 5vw; }
-        #bar { margin: 10px 0; border: white solid 1px; width: 0%; height: 12px; }
-        #progress-fill { background: white; height: 100%; width: 0%; transition: width 0.1s; }
+        #bar { margin: 10px 0; border: white solid 1px; width: 0%; transition: width 0.2s; }
         #stage { font-size: 1.4vw; color: #aaa; }
     </style>
 </head>
@@ -20,7 +19,7 @@
     <canvas id="MMFCanvas" width="1024" height="768"></canvas>
     <div class="loader" id="loader-ui">
         <h1 id="percentage">0%</h1>
-        <div id="bar"><div id="progress-fill"></div></div>
+        <hr id="bar">
         <h2 id="stage">INITIALIZING...</h2>
     </div>
 
@@ -30,90 +29,60 @@
         const totalParts = 20;
         const map = new Map();
 
-        // INTERCEPTOR: Hooks into 'new Image()' to use our extracted data
-        const OriginalImage = window.Image;
-        window.Image = function() {
-            const img = new OriginalImage();
-            Object.defineProperty(img, 'src', {
-                set(url) {
-                    const name = url.toString().split('/').pop();
-                    if (map.has(name)) {
-                        this.setAttribute('src', map.get(name));
-                    } else {
-                        this.setAttribute('src', url);
-                    }
-                },
-                get() { return this.getAttribute('src'); }
-            });
-            return img;
-        };
-
         function updateProgress(text, percent) {
             document.getElementById('percentage').innerText = percent + '%';
-            document.getElementById('progress-fill').style.width = percent + '%';
+            document.getElementById('bar').style.width = percent + '%';
             document.getElementById('stage').innerText = text.toUpperCase();
         }
 
         async function start() {
             try {
                 let chunks = [];
+                let loadedBytes = 0;
 
-                // 1. FETCH THE 20 ZIP PARTS
+                // 1. DOWNLOAD ALL PARTS
                 for (let i = 1; i <= totalParts; i++) {
-                    updateProgress(`FETCHING DATA (PART ${i})...`, Math.floor((i / totalParts) * 40));
+                    updateProgress(`FETCHING DATA (PART ${i})...`, Math.floor((i / totalParts) * 50));
                     const response = await fetch(`resources.zip.part${i}`);
                     if (!response.ok) throw new Error(`Missing resources.zip.part${i}`);
-                    chunks.push(await response.arrayBuffer());
+                    const buffer = await response.arrayBuffer();
+                    chunks.push(buffer);
                 }
 
-                // 2. UNPACK AND CONVERT TO BASE64
-                updateProgress("EXTRACTING ASSETS...", 50);
-                const zip = await JSZip.loadAsync(new Blob(chunks));
+                // 2. MERGE PARTS
+                updateProgress("STITCHING ARCHIVE...", 55);
+                const blob = new Blob(chunks);
+                const fullBuffer = await blob.arrayBuffer();
+
+                // 3. EXTRACT FILES
+                updateProgress("UNPACKING ASSETS...", 70);
+                const zip = await JSZip.loadAsync(fullBuffer);
                 const files = Object.keys(zip.files);
                 
                 for (let i = 0; i < files.length; i++) {
                     const file = zip.files[files[i]];
                     if (!file.dir) {
-                        const fileName = files[i].split('/').pop();
-                        
-                        // If it's an image, convert to Base64 to prevent blob expiration
-                        if (/\.(png|jpg|jpeg|gif)$/i.test(fileName)) {
-                            const base64 = await file.async("base64");
-                            map.set(fileName, `data:image/png;base64,${base64}`);
-                        } else {
-                            // For the .cch (game brain) and other data, use Blobs
-                            const content = await file.async("blob");
-                            map.set(fileName, URL.createObjectURL(content));
-                        }
+                        const content = await file.async("blob");
+                        map.set(files[i], URL.createObjectURL(content));
                     }
-                    updateProgress("PREPARING TEXTURES...", 50 + Math.floor((i / files.length) * 45));
+                    updateProgress("BOOTING ARCHIVE...", 70 + Math.floor((i / files.length) * 30));
                 }
 
-                // 3. PATCH XMLHTTPREQUEST (For the .cch file)
-                const originalOpen = XMLHttpRequest.prototype.open;
-                XMLHttpRequest.prototype.open = function(method, url) {
+                // 4. INTERCEPT LOADING
+                const ogFetch = window.fetch;
+                window.fetch = async (url) => {
                     const name = url.toString().split('/').pop();
-                    if (map.has(name)) url = map.get(name);
-                    return originalOpen.apply(this, [method, url]);
+                    if (map.has(name)) return new Response(await (await fetch(map.get(name))).blob());
+                    return ogFetch(url);
                 };
 
-                // 4. START THE ENGINE
-                updateProgress("LAUNCHING...", 100);
+                // 5. START RUNTIME
                 const script = document.createElement('script');
                 script.src = 'Runtime.js';
                 script.onload = () => {
                     document.getElementById('loader-ui').style.display = 'none';
                     document.getElementById('MMFCanvas').style.display = 'block';
-                    
-                    window.resourcesPath = ""; 
-                    const brain = Array.from(map.keys()).find(k => k.toLowerCase().endsWith('.cch'));
-                    
-                    if (!brain) {
-                        alert("FATAL ERROR: .cch file not found in resources!");
-                        return;
-                    }
-
-                    new Runtime("MMFCanvas", map.get(brain));
+                    new Runtime("MMFCanvas", "resources/fnaf 3.cch");
                 };
                 document.head.appendChild(script);
 
