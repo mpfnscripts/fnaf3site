@@ -4,17 +4,36 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Five Nights at Freddy's 4</title>
-    <link rel="icon" href="data:image/x-icon;base64,AAABAAEAAQEAAAEAIAAwAAAAFgAAACgAAAABAAAAAgAAAAEAIAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//AAAAAA==" />
+    <link rel="icon" href="favicon.ico" />
     <style>
         html { display: block; -webkit-user-select: none; user-select: none; overflow: hidden; height: 100%; background: #000; }
-        body { position: relative; background-color: black; background-image: url(resources/office.png); background-position: center; background-size: cover; display: flex; align-items: center; justify-content: center; margin: 0; height: 100%; overflow: hidden; }
+        body { 
+            position: relative; 
+            background-color: black; 
+            background-image: url('office.png'); 
+            background-position: center; 
+            background-size: cover; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            margin: 0; 
+            height: 100%; 
+            overflow: hidden; 
+        }
         
         .selection { height: 100vh; width: 100%; display: flex; overflow: hidden; position: relative; z-index: 2; }
         .launcher-text { position: absolute; left: 50%; transform: translate(-50%, 0); bottom: 2.5vh; z-index: 3; cursor: pointer; }
         .vignette { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 4; }
-        .glitch { position: absolute; background-image: url(resources/background.gif); background-position: center; background-size: 50vw; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; opacity: 0.15; z-index: 1; }
         
-        /* Canvas must be visible once game starts */
+        .glitch { 
+            position: absolute; 
+            background-image: url('background.gif'); 
+            background-position: center; 
+            background-size: 50vw; 
+            top: 0; left: 0; width: 100vw; height: 100vh; 
+            pointer-events: none; opacity: 0.15; z-index: 1; 
+        }
+        
         canvas { display: none; user-select: none; position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 10; background: #000; }
 
         #title { position: absolute; top: 10vh; left: 5vw; z-index: 3; height: 20vh; }
@@ -22,7 +41,8 @@
 
         .loader { position: absolute; display: flex; flex-direction: column; align-items: center; left: 50%; transform: translate(-50%, 0); bottom: 12vh; z-index: 5; color: white; font-family: monospace; text-align: center; width: 85vw; }
         .loader h1 { margin: 0; font-size: 5vw; text-shadow: 0 0 10px red; }
-        #bar { margin: 10px 0; border: white solid 1px; width: 0%; height: 4px; transition: width 0.2s; background: red; }
+        #bar-box { width: 100%; border: 1px solid #333; height: 6px; margin: 10px 0; background: #111; }
+        #bar { width: 0%; height: 100%; transition: width 0.2s; background: red; }
         #stage { font-size: 1.4vw; color: #aaa; text-transform: uppercase; }
 
         #play-button { 
@@ -38,21 +58,24 @@
     <canvas id="MMFCanvas" width="1024" height="768"></canvas>
     
     <div class="selection" id="selection">
-        <img id="title" src="resources/title.png">
-        <img id="animatronic" src="resources/animatronic.png">
+        <img id="title" src="title.png">
+        <img id="animatronic" src="animatronic.png">
+        
         <div class="loader" id="loader-ui">
             <h1 id="percentage">0%</h1>
-            <div id="bar"></div>
-            <h2 id="stage">INITIALIZING...</h2>
+            <div id="bar-box"><div id="bar"></div></div>
+            <h2 id="stage">WAKING UP...</h2>
         </div>
+
         <button id="play-button">START NIGHTMARE</button>
+
         <a href="https://discord.gg/xuu8TnSY4b">
-            <div class="launcher-text"><img src="resources/launcher-text.png" style="width: 45vw;"></div>
+            <div class="launcher-text"><img src="launcher-text.png" style="width: 45vw;"></div>
         </a>
     </div>
 
     <div class="glitch"></div>
-    <img src="resources/vignette.png" class="vignette">
+    <img src="vignette.png" class="vignette">
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
@@ -73,7 +96,7 @@
                 for (let i = 1; i <= totalParts; i++) {
                     updateProgress(`FETCHING PART ${i}`, Math.floor((i / totalParts) * 40));
                     const res = await fetch(`resources.zip.part${i}`);
-                    if (!res.ok) throw new Error("Could not find part " + i);
+                    if (!res.ok) throw new Error("Missing File: resources.zip.part" + i);
                     chunks.push(await res.arrayBuffer());
                 }
 
@@ -95,11 +118,11 @@
                 document.getElementById('loader-ui').style.display = 'none';
                 document.getElementById('play-button').style.display = 'block';
             } catch (err) {
-                document.getElementById('stage').innerHTML = `<span style="color:red">ERROR: ${err.message}</span>`;
+                document.getElementById('stage').innerHTML = `<span style="color:red">LOAD FAILED: ${err.message}</span>`;
             }
         }
 
-        // --- ENGINE PATCHING ---
+        // Interceptors for Clickteam Engine
         const ogFetch = window.fetch;
         window.fetch = async (input, init) => {
             const url = typeof input === 'string' ? input : input.url;
@@ -119,33 +142,24 @@
             return ogOpen.apply(this, arguments);
         };
 
-        function unlockAudio() {
-            const AC = window.AudioContext || window.webkitAudioContext;
-            if (AC) {
-                const ctx = new AC();
-                ctx.resume();
-            }
-        }
-
         document.getElementById('play-button').onclick = () => {
-            unlockAudio();
+            // Unsuspend Audio
+            const AC = window.AudioContext || window.webkitAudioContext;
+            if (AC) { const ctx = new AC(); ctx.resume(); }
+
             document.getElementById('selection').style.display = 'none';
             document.getElementById('MMFCanvas').style.display = 'block';
 
-            // Find the CCH file automatically
             const cchName = Array.from(urlMap.keys()).find(k => k.toLowerCase().endsWith('.cch'));
             
             const script = document.createElement('script');
             script.src = "Runtime.js";
-            script.onerror = () => alert("Runtime.js not found in folder!");
             script.onload = () => {
                 setTimeout(() => {
                     if (typeof Runtime !== 'undefined') {
                         new Runtime("MMFCanvas", cchName);
-                    } else {
-                        console.error("Runtime not initialized properly.");
                     }
-                }, 100);
+                }, 200);
             };
             document.head.appendChild(script);
         };
