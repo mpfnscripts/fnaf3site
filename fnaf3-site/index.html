@@ -11,7 +11,8 @@
         canvas { display: none; user-select: none; }
         .loader { position: absolute; display: flex; flex-direction: column; align-items: center; z-index: 1; text-align: center; width: 85vw; }
         .loader h1 { margin: 0; font-size: 5vw; }
-        #bar { margin: 10px 0; border: white solid 1px; width: 0%; transition: width 0.2s; }
+        #bar { margin: 10px 0; border: white solid 1px; width: 0%; height: 10px; transition: width 0.2s; }
+        #progress-fill { background: white; height: 100%; width: 0%; transition: width 0.2s; }
         #stage { font-size: 1.4vw; color: #aaa; }
     </style>
 </head>
@@ -19,7 +20,7 @@
     <canvas id="MMFCanvas" width="1024" height="768"></canvas>
     <div class="loader" id="loader-ui">
         <h1 id="percentage">0%</h1>
-        <hr id="bar">
+        <div id="bar"><div id="progress-fill"></div></div>
         <h2 id="stage">INITIALIZING...</h2>
     </div>
 
@@ -29,9 +30,27 @@
         const totalParts = 20;
         const map = new Map();
 
+        // 1. GLOBAL TEXTURE FIX (Intercepts new Image() calls for M000x.png files)
+        const OriginalImage = window.Image;
+        window.Image = function() {
+            const img = new OriginalImage();
+            Object.defineProperty(img, 'src', {
+                set(url) {
+                    const name = url.toString().split('/').pop();
+                    if (map.has(name)) {
+                        this.setAttribute('src', map.get(name));
+                    } else {
+                        this.setAttribute('src', url);
+                    }
+                },
+                get() { return this.getAttribute('src'); }
+            });
+            return img;
+        };
+
         function updateProgress(text, percent) {
             document.getElementById('percentage').innerText = percent + '%';
-            document.getElementById('bar').style.width = percent + '%';
+            document.getElementById('progress-fill').style.width = percent + '%';
             document.getElementById('stage').innerText = text.toUpperCase();
         }
 
@@ -39,16 +58,15 @@
             try {
                 let chunks = [];
 
-                // 1. DOWNLOAD ALL PARTS
+                // 2. DOWNLOAD ALL 20 PARTS
                 for (let i = 1; i <= totalParts; i++) {
                     updateProgress(`FETCHING DATA (PART ${i})...`, Math.floor((i / totalParts) * 50));
                     const response = await fetch(`resources.zip.part${i}`);
                     if (!response.ok) throw new Error(`Missing resources.zip.part${i}`);
-                    const buffer = await response.arrayBuffer();
-                    chunks.push(buffer);
+                    chunks.push(await response.arrayBuffer());
                 }
 
-                // 2. MERGE AND UNZIP
+                // 3. MERGE AND UNZIP INTO MEMORY
                 updateProgress("STITCHING ARCHIVE...", 55);
                 const zip = await JSZip.loadAsync(new Blob(chunks));
                 const files = Object.keys(zip.files);
@@ -59,12 +77,12 @@
                         const content = await file.async("blob");
                         const blobURL = URL.createObjectURL(content);
                         const fileName = files[i].split('/').pop(); 
-                        map.set(fileName, blobURL); // Store by filename only
+                        map.set(fileName, blobURL); 
                     }
                     updateProgress("UNPACKING ASSETS...", 60 + Math.floor((i / files.length) * 35));
                 }
 
-                // 3. PATCH XMLHttpRequest (For missing textures)
+                // 4. PATCH XMLHttpRequest (For .cch and other data requests)
                 const originalOpen = XMLHttpRequest.prototype.open;
                 XMLHttpRequest.prototype.open = function(method, url) {
                     const name = url.toString().split('/').pop();
@@ -74,34 +92,39 @@
                     return originalOpen.apply(this, [method, url]);
                 };
 
-                // 4. PATCH fetch (For modern loading)
+                // 5. PATCH Fetch (For modern texture/audio loading)
                 const ogFetch = window.fetch;
                 window.fetch = async (url) => {
                     const name = url.toString().split('/').pop();
-                    if (map.has(name)) {
-                        return ogFetch(map.get(name));
-                    }
+                    if (map.has(name)) return ogFetch(map.get(name));
                     return ogFetch(url);
                 };
 
-                // 5. START RUNTIME
+                // 6. START THE GAME ENGINE
                 const script = document.createElement('script');
                 script.src = 'Runtime.js';
                 script.onload = () => {
                     document.getElementById('loader-ui').style.display = 'none';
                     document.getElementById('MMFCanvas').style.display = 'block';
                     
-                    window.resourcesPath = "resources/"; 
+                    // Reset resources path so it looks at the root (where our map is)
+                    window.resourcesPath = ""; 
 
-                    // If the .cch file is in the ZIP, we use that. 
-                    // Otherwise, we look for the physical file you might have added.
-                    const brain = map.get("fnaf 3.cch") || "resources/fnaf 3.cch";
+                    // Find the "brain" (.cch) file inside the map automatically
+                    const brain = Array.from(map.keys()).find(k => k.toLowerCase().endsWith('.cch'));
+                    
+                    if (!brain) {
+                        document.getElementById('stage').innerHTML = "ERROR: GAME DATA (.CCH) NOT FOUND IN ZIP";
+                        return;
+                    }
+
                     new Runtime("MMFCanvas", brain);
                 };
                 document.head.appendChild(script);
 
             } catch (err) {
                 document.getElementById('stage').innerHTML = `<span style="color:red">ERROR: ${err.message}</span>`;
+                console.error(err);
             }
         }
 
