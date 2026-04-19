@@ -21,7 +21,7 @@
 
         .loader { position: absolute; display: flex; flex-direction: column; align-items: center; left: 50%; transform: translate(-50%, 0); bottom: 12vh; z-index: 5; color: white; font-family: monospace; text-align: center; width: 85vw; }
         .loader h1 { margin: 0; font-size: 5vw; text-shadow: 0 0 10px red; }
-        #bar { margin: 10px 0; border: white solid 1px; width: 0%; height: 2px; transition: width 0.2s; background: red; }
+        #bar { margin: 10px 0; border: white solid 1px; width: 0%; height: 4px; transition: width 0.2s; background: red; }
         #stage { font-size: 1.4vw; color: #aaa; text-transform: uppercase; }
 
         #play-button { 
@@ -43,7 +43,7 @@
         <div class="loader" id="loader-ui">
             <h1 id="percentage">0%</h1>
             <div id="bar"></div>
-            <h2 id="stage">RETURNING GEARS...</h2>
+            <h2 id="stage">INITIALIZING...</h2>
         </div>
 
         <button id="play-button">START NIGHTMARE</button>
@@ -59,11 +59,9 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
     <script>
-        const totalParts = 20;
+        const totalParts = 20; 
         const blobMap = new Map();
         const urlMap = new Map();
-        // Updated paths to look in the current folder instead of src/
-        const runtimePath = "Runtime.js"; 
 
         function updateProgress(text, percent) {
             document.getElementById('percentage').innerText = percent + '%';
@@ -74,15 +72,15 @@
         async function init() {
             try {
                 let chunks = [];
-                // Load Parts from root folder
                 for (let i = 1; i <= totalParts; i++) {
-                    updateProgress(`LOCATING ARCHIVE (PART ${i})`, Math.floor((i / totalParts) * 40));
+                    updateProgress(`FETCHING PART ${i}`, Math.floor((i / totalParts) * 40));
+                    // Check if file name matches resources.zip.part or resources.part
                     const res = await fetch(`resources.zip.part${i}`);
-                    if (!res.ok) throw new Error("Missing Part " + i);
+                    if (!res.ok) throw new Error("Could not find part " + i);
                     chunks.push(await res.arrayBuffer());
                 }
 
-                updateProgress("BOOTING UP ARCHIVE...", 50);
+                updateProgress("UNZIPPING NIGHTMARE...", 50);
                 const zip = await JSZip.loadAsync(new Blob(chunks));
                 const files = Object.keys(zip.files).filter(name => !zip.files[name].dir);
 
@@ -90,11 +88,17 @@
                     const file = zip.files[files[i]];
                     const fileName = files[i].split('/').pop();
                     const data = await file.async("uint8array");
-                    const blob = new Blob([data], { type: fileName.endsWith('.png') ? 'image/png' : 'application/octet-stream' });
                     
+                    // Critical for audio: specific mime types
+                    let type = "application/octet-stream";
+                    if(fileName.endsWith(".png")) type = "image/png";
+                    if(fileName.endsWith(".mp3")) type = "audio/mpeg";
+                    if(fileName.endsWith(".wav")) type = "audio/wav";
+
+                    const blob = new Blob([data], { type: type });
                     blobMap.set(fileName, blob);
                     urlMap.set(fileName, URL.createObjectURL(blob));
-                    updateProgress("MAPPING MEMORY...", 50 + Math.floor((i / files.length) * 45));
+                    updateProgress("MAPPING ASSETS...", 50 + Math.floor((i / files.length) * 45));
                 }
 
                 updateProgress("READY", 100);
@@ -107,7 +111,7 @@
             }
         }
 
-        // Interceptors
+        // --- GLOBAL INTERCEPTORS ---
         const ogFetch = window.fetch;
         window.fetch = async (input, init) => {
             const url = typeof input === 'string' ? input : input.url;
@@ -127,6 +131,20 @@
             return ogOpen.apply(this, arguments);
         };
 
+        const OriginalImage = window.Image;
+        window.Image = function() {
+            const img = new OriginalImage();
+            const setter = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src').set;
+            Object.defineProperty(img, 'src', {
+                set: function(url) {
+                    const name = url.toString().split('/').pop();
+                    if (urlMap.has(name)) setter.call(this, urlMap.get(name));
+                    else setter.call(this, url);
+                }
+            });
+            return img;
+        };
+
         function unlockAudio() {
             const AC = window.AudioContext || window.webkitAudioContext;
             if (!AC) return;
@@ -141,12 +159,13 @@
             document.getElementById('MMFCanvas').style.display = 'block';
 
             const script = document.createElement('script');
-            script.src = runtimePath;
+            script.src = "Runtime.js";
             script.onload = () => {
                 window.resourcesPath = ""; 
+                // Find the first .cch file available in the zip
                 const actualCch = Array.from(urlMap.keys()).find(f => f.toLowerCase().endsWith('.cch')) || "fnaf 4.cch";
                 new Runtime("MMFCanvas", actualCch);
-                setTimeout(unlockAudio, 2000); 
+                setTimeout(unlockAudio, 1500); 
             };
             document.head.appendChild(script);
         };
