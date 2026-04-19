@@ -11,7 +11,7 @@
         canvas { display: none; user-select: none; }
         .loader { position: absolute; display: flex; flex-direction: column; align-items: center; z-index: 1; text-align: center; width: 85vw; }
         .loader h1 { margin: 0; font-size: 5vw; }
-        #bar { margin: 10px 0; border: white solid 1px; width: 0%; transition: width 0.2s; }
+        #bar { margin: 10px 0; border: white solid 1px; width: 0%; transition: width 0.2s; height: 2px; }
         #stage { font-size: 1.4vw; color: #aaa; }
     </style>
 </head>
@@ -19,7 +19,7 @@
     <canvas id="MMFCanvas" width="1024" height="768"></canvas>
     <div class="loader" id="loader-ui">
         <h1 id="percentage">0%</h1>
-        <hr id="bar">
+        <div id="bar"></div>
         <h2 id="stage">INITIALIZING...</h2>
     </div>
 
@@ -29,18 +29,15 @@
         const totalParts = 20;
         const map = new Map();
 
-        // --- PATCH 1: IMAGE INTERCEPTOR ---
+        // Intercept Images immediately
         const OriginalImage = window.Image;
         window.Image = function() {
             const img = new OriginalImage();
             Object.defineProperty(img, 'src', {
                 set(url) {
                     const name = url.toString().split('/').pop();
-                    if (map.has(name)) {
-                        this.setAttribute('src', map.get(name));
-                    } else {
-                        this.setAttribute('src', url);
-                    }
+                    if (map.has(name)) this.setAttribute('src', map.get(name));
+                    else this.setAttribute('src', url);
                 },
                 get() { return this.getAttribute('src'); }
             });
@@ -57,36 +54,32 @@
             try {
                 let chunks = [];
 
-                // 1. DOWNLOAD ALL PARTS
+                // 1. Download Parts
                 for (let i = 1; i <= totalParts; i++) {
-                    updateProgress(`FETCHING DATA (PART ${i})...`, Math.floor((i / totalParts) * 50));
+                    updateProgress(`FETCHING DATA (PART ${i})...`, Math.floor((i / totalParts) * 40));
                     const response = await fetch(`resources.zip.part${i}`);
-                    if (!response.ok) throw new Error(`Missing resources.zip.part${i}`);
-                    const buffer = await response.arrayBuffer();
-                    chunks.push(buffer);
+                    if (!response.ok) throw new Error(`Missing Part ${i}`);
+                    chunks.push(await response.arrayBuffer());
                 }
 
-                // 2. MERGE PARTS
-                updateProgress("STITCHING ARCHIVE...", 55);
-                const blob = new Blob(chunks);
-                const fullBuffer = await blob.arrayBuffer();
-
-                // 3. EXTRACT FILES
-                updateProgress("UNPACKING ASSETS...", 70);
-                const zip = await JSZip.loadAsync(fullBuffer);
+                // 2. Unpack with Uint8Array (More stable than Blobs)
+                updateProgress("UNPACKING ASSETS...", 50);
+                const zip = await JSZip.loadAsync(new Blob(chunks));
                 const files = Object.keys(zip.files);
                 
                 for (let i = 0; i < files.length; i++) {
                     const file = zip.files[files[i]];
                     if (!file.dir) {
-                        const content = await file.async("blob");
                         const fileName = files[i].split('/').pop();
-                        map.set(fileName, URL.createObjectURL(content));
+                        // Extract as Uint8Array to prevent truncation
+                        const data = await file.async("uint8array");
+                        const blob = new Blob([data], { type: "application/octet-stream" });
+                        map.set(fileName, URL.createObjectURL(blob));
                     }
-                    updateProgress("BOOTING ARCHIVE...", 70 + Math.floor((i / files.length) * 30));
+                    updateProgress("PREPARING MEMORY...", 50 + Math.floor((i / files.length) * 45));
                 }
 
-                // --- PATCH 2: XHR INTERCEPTOR (For .cch and audio) ---
+                // 3. XHR Interceptor for the Engine
                 const originalOpen = XMLHttpRequest.prototype.open;
                 XMLHttpRequest.prototype.open = function(method, url) {
                     const name = url.toString().split('/').pop();
@@ -96,32 +89,26 @@
                     return originalOpen.apply(this, [method, url]);
                 };
 
-                // 4. INTERCEPT FETCH
-                const ogFetch = window.fetch;
-                window.fetch = async (url) => {
-                    const name = url.toString().split('/').pop();
-                    if (map.has(name)) return ogFetch(map.get(name));
-                    return ogFetch(url);
-                };
-
-                // 5. START RUNTIME
+                // 4. Final Launch
+                updateProgress("LAUNCHING...", 100);
                 const script = document.createElement('script');
                 script.src = 'Runtime.js';
                 script.onload = () => {
                     document.getElementById('loader-ui').style.display = 'none';
                     document.getElementById('MMFCanvas').style.display = 'block';
                     
-                    // Important: Set resourcesPath to empty so it looks for flat filenames
-                    window.resourcesPath = ""; 
+                    window.resourcesPath = ""; // Force flat pathing
                     
-                    // Find the actual .cch file name in your zip
-                    const cchFile = Array.from(map.keys()).find(f => f.endsWith('.cch'));
-                    new Runtime("MMFCanvas", cchFile || "fnaf 3.cch");
+                    const cchFile = Array.from(map.keys()).find(f => f.toLowerCase().endsWith('.cch'));
+                    if (!cchFile) throw new Error("Game data (.cch) not found in ZIP!");
+                    
+                    new Runtime("MMFCanvas", cchFile);
                 };
                 document.head.appendChild(script);
 
             } catch (err) {
                 document.getElementById('stage').innerHTML = `<span style="color:red">ERROR: ${err.message}</span>`;
+                console.error(err);
             }
         }
 
