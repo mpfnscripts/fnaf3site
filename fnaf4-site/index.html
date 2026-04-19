@@ -106,36 +106,47 @@
         }
 
         // --- 3. START GAME ---
-        document.getElementById('play-button').onclick = () => {
-            // Unlock browser audio
-            const AC = window.AudioContext || window.webkitAudioContext;
-            if (AC) new AC().resume();
+document.getElementById('play-button').onclick = () => {
+    // 1. Force Resume Audio Context
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) {
+        const audioCtx = new AC();
+        audioCtx.resume();
+    }
+    
+    // 2. Heavy-Duty UI Cleanup
+    // Hide the selection container and clear any background images set via CSS
+    const selection = document.getElementById('selection');
+    if (selection) selection.style.display = 'none';
+    
+    document.body.style.background = "black";
+    document.body.style.backgroundImage = "none";
+
+    // 3. Prepare Canvas
+    const canvas = document.getElementById('MMFCanvas');
+    canvas.style.display = 'block';
+    canvas.focus();
+
+    // 4. Load Engine
+    const script = document.createElement('script');
+    script.src = "Runtime.js";
+    script.onload = () => {
+        // Find the .cch file
+        const cchFileName = Array.from(urlMap.keys()).find(k => k.toLowerCase().endsWith('.cch'));
+        
+        if (cchFileName) {
+            // CRITICAL: We must pass the BLOBS URL, not just the string name
+            const gameDataUrl = urlMap.get(cchFileName);
+            console.log("Starting game with data:", cchFileName);
             
-            // UI Cleanup: Hide all launcher visuals
-            document.getElementById('selection').style.display = 'none';
-            document.body.style.background = "black";
-            document.body.style.backgroundImage = "none"; // Remove office.png/gif
-
-            const canvas = document.getElementById('MMFCanvas');
-            canvas.style.display = 'block';
-            canvas.focus();
-
-            // Load the actual Clickteam Engine
-            const script = document.createElement('script');
-            script.src = "Runtime.js";
-            script.onload = () => {
-                // Find the game data file (usually ends in .cch)
-                const cchFile = Array.from(urlMap.keys()).find(k => k.toLowerCase().endsWith('.cch'));
-                
-                if (cchFile) {
-                    // Start the engine using the Blob URL
-                    new Runtime("MMFCanvas", urlMap.get(cchFile));
-                } else {
-                    alert("Missing .cch file inside resources.zip!");
-                }
-            };
-            document.head.appendChild(script);
-        };
+            // Initialize the engine
+            window.fnafRuntime = new Runtime("MMFCanvas", gameDataUrl);
+        } else {
+            alert("Error: .cch game file (the actual game data) not found in your zip!");
+        }
+    };
+    document.head.appendChild(script);
+};
 
         window.onload = init;
     </script>
