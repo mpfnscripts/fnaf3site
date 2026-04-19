@@ -11,8 +11,8 @@
         canvas { display: none; user-select: none; }
         .loader { position: absolute; display: flex; flex-direction: column; align-items: center; z-index: 1; text-align: center; width: 85vw; }
         .loader h1 { margin: 0; font-size: 5vw; }
-        #bar { margin: 10px 0; border: white solid 1px; width: 0%; height: 10px; transition: width 0.2s; }
-        #progress-fill { background: white; height: 100%; width: 0%; transition: width 0.2s; }
+        #bar { margin: 10px 0; border: white solid 1px; width: 0%; height: 12px; }
+        #progress-fill { background: white; height: 100%; width: 0%; transition: width 0.1s; }
         #stage { font-size: 1.4vw; color: #aaa; }
     </style>
 </head>
@@ -30,7 +30,7 @@
         const totalParts = 20;
         const map = new Map();
 
-        // 1. GLOBAL TEXTURE FIX (Intercepts new Image() calls for M000x.png files)
+        // INTERCEPTOR: Hooks into 'new Image()' to use our extracted data
         const OriginalImage = window.Image;
         window.Image = function() {
             const img = new OriginalImage();
@@ -58,73 +58,67 @@
             try {
                 let chunks = [];
 
-                // 2. DOWNLOAD ALL 20 PARTS
+                // 1. FETCH THE 20 ZIP PARTS
                 for (let i = 1; i <= totalParts; i++) {
-                    updateProgress(`FETCHING DATA (PART ${i})...`, Math.floor((i / totalParts) * 50));
+                    updateProgress(`FETCHING DATA (PART ${i})...`, Math.floor((i / totalParts) * 40));
                     const response = await fetch(`resources.zip.part${i}`);
                     if (!response.ok) throw new Error(`Missing resources.zip.part${i}`);
                     chunks.push(await response.arrayBuffer());
                 }
 
-                // 3. MERGE AND UNZIP INTO MEMORY
-                updateProgress("STITCHING ARCHIVE...", 55);
+                // 2. UNPACK AND CONVERT TO BASE64
+                updateProgress("EXTRACTING ASSETS...", 50);
                 const zip = await JSZip.loadAsync(new Blob(chunks));
                 const files = Object.keys(zip.files);
                 
                 for (let i = 0; i < files.length; i++) {
                     const file = zip.files[files[i]];
                     if (!file.dir) {
-                        const content = await file.async("blob");
-                        const blobURL = URL.createObjectURL(content);
-                        const fileName = files[i].split('/').pop(); 
-                        map.set(fileName, blobURL); 
+                        const fileName = files[i].split('/').pop();
+                        
+                        // If it's an image, convert to Base64 to prevent blob expiration
+                        if (/\.(png|jpg|jpeg|gif)$/i.test(fileName)) {
+                            const base64 = await file.async("base64");
+                            map.set(fileName, `data:image/png;base64,${base64}`);
+                        } else {
+                            // For the .cch (game brain) and other data, use Blobs
+                            const content = await file.async("blob");
+                            map.set(fileName, URL.createObjectURL(content));
+                        }
                     }
-                    updateProgress("UNPACKING ASSETS...", 60 + Math.floor((i / files.length) * 35));
+                    updateProgress("PREPARING TEXTURES...", 50 + Math.floor((i / files.length) * 45));
                 }
 
-                // 4. PATCH XMLHttpRequest (For .cch and other data requests)
+                // 3. PATCH XMLHTTPREQUEST (For the .cch file)
                 const originalOpen = XMLHttpRequest.prototype.open;
                 XMLHttpRequest.prototype.open = function(method, url) {
                     const name = url.toString().split('/').pop();
-                    if (map.has(name)) {
-                        url = map.get(name);
-                    }
+                    if (map.has(name)) url = map.get(name);
                     return originalOpen.apply(this, [method, url]);
                 };
 
-                // 5. PATCH Fetch (For modern texture/audio loading)
-                const ogFetch = window.fetch;
-                window.fetch = async (url) => {
-                    const name = url.toString().split('/').pop();
-                    if (map.has(name)) return ogFetch(map.get(name));
-                    return ogFetch(url);
-                };
-
-                // 6. START THE GAME ENGINE
+                // 4. START THE ENGINE
+                updateProgress("LAUNCHING...", 100);
                 const script = document.createElement('script');
                 script.src = 'Runtime.js';
                 script.onload = () => {
                     document.getElementById('loader-ui').style.display = 'none';
                     document.getElementById('MMFCanvas').style.display = 'block';
                     
-                    // Reset resources path so it looks at the root (where our map is)
                     window.resourcesPath = ""; 
-
-                    // Find the "brain" (.cch) file inside the map automatically
                     const brain = Array.from(map.keys()).find(k => k.toLowerCase().endsWith('.cch'));
                     
                     if (!brain) {
-                        document.getElementById('stage').innerHTML = "ERROR: GAME DATA (.CCH) NOT FOUND IN ZIP";
+                        alert("FATAL ERROR: .cch file not found in resources!");
                         return;
                     }
 
-                    new Runtime("MMFCanvas", brain);
+                    new Runtime("MMFCanvas", map.get(brain));
                 };
                 document.head.appendChild(script);
 
             } catch (err) {
                 document.getElementById('stage').innerHTML = `<span style="color:red">ERROR: ${err.message}</span>`;
-                console.error(err);
             }
         }
 
