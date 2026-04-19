@@ -1,129 +1,105 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Five Nights at Freddy's 4</title>
-    <link rel="icon" href="favicon.ico" />
-    <style>
-        html { display: block; -webkit-user-select: none; user-select: none; overflow: hidden; height: 100%; background: #000; }
-        body { position: relative; background: #000 url('office.png') no-repeat center; background-size: cover; display: flex; align-items: center; justify-content: center; margin: 0; height: 100%; overflow: hidden; }
-        .selection { height: 100vh; width: 100%; display: flex; position: relative; z-index: 2; }
-        .launcher-text { position: absolute; left: 50%; transform: translate(-50%, 0); bottom: 2.5vh; z-index: 3; }
-        .vignette { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 4; }
-        .glitch { position: absolute; background-image: url('background.gif'); background-position: center; background-size: 50vw; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; opacity: 0.15; z-index: 1; }
-        canvas { display: none; position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 10; background: #000; }
-        #title { position: absolute; top: 10vh; left: 5vw; z-index: 3; height: 20vh; }
-        #animatronic { position: absolute; top: -5vh; right: 7vw; height: 120vh; z-index: 2; }
-        .loader { position: absolute; display: flex; flex-direction: column; align-items: center; left: 50%; transform: translate(-50%, 0); bottom: 12vh; z-index: 5; color: white; font-family: monospace; text-align: center; width: 85vw; }
-        #bar-box { width: 100%; border: 1px solid #333; height: 6px; margin: 10px 0; background: #111; }
-        #bar { width: 0%; height: 100%; background: red; transition: width 0.2s; }
-        #play-button { display: none; position: absolute; left: 50%; bottom: 15vh; transform: translateX(-50%); background: #111; border: 2px solid red; color: white; padding: 15px 40px; font-size: 2vw; font-family: monospace; cursor: pointer; z-index: 20; }
-    </style>
-</head>
-<body>
-    <canvas id="MMFCanvas" width="1024" height="768"></canvas>
-    <div class="selection" id="selection">
-        <img id="title" src="title.png">
-        <img id="animatronic" src="animatronic.png">
-        <div class="loader" id="loader-ui">
-            <h1 id="percentage">0%</h1>
-            <div id="bar-box"><div id="bar"></div></div>
-            <h2 id="stage">WAKING UP...</h2>
-        </div>
-        <button id="play-button">START NIGHTMARE</button>
-        <div class="launcher-text"><img src="launcher-text.png" style="width: 45vw;"></div>
-    </div>
-    <div class="glitch"></div>
-    <img src="vignette.png" class="vignette">
+const blobMap = new Map();
+const urlMap = new Map();
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <script>
-        const blobMap = new Map();
-        const urlMap = new Map();
-
-        // --- THE FIX: FORCING THE ENGINE TO SEE OUR UNZIPPED FILES ---
-        const OriginalImage = window.Image;
-        window.Image = function() {
-            const img = new OriginalImage();
-            const setter = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src').set;
-            Object.defineProperty(img, 'src', {
-                set: function(val) {
-                    const filename = val.toString().split('/').pop();
-                    if (urlMap.has(filename)) {
-                        setter.call(this, urlMap.get(filename));
-                    } else {
-                        setter.call(this, val);
-                    }
-                }
-            });
-            return img;
-        };
-
-        // Hook Fetch & XHR
-        const ogFetch = window.fetch;
-        window.fetch = async (input, init) => {
-            const url = typeof input === 'string' ? input : input.url;
-            const name = url.split('/').pop();
-            if (blobMap.has(name)) return new Response(blobMap.get(name));
-            return ogFetch(input, init);
-        };
-
-        const ogOpen = XMLHttpRequest.prototype.open;
-        XMLHttpRequest.prototype.open = function(m, url) {
-            const name = url.toString().split('/').pop();
-            if (urlMap.has(name)) url = urlMap.get(name);
-            return ogOpen.apply(this, arguments);
-        };
-
-        async function init() {
-            try {
-                let chunks = [];
-                for (let i = 1; i <= 20; i++) {
-                    document.getElementById('percentage').innerText = Math.floor((i/20)*40) + '%';
-                    document.getElementById('bar').style.width = Math.floor((i/20)*40) + '%';
-                    const res = await ogFetch(`resources.zip.part${i}`);
-                    if (!res.ok) throw new Error("Missing part" + i);
-                    chunks.push(await res.arrayBuffer());
-                }
-
-                const zip = await JSZip.loadAsync(new Blob(chunks));
-                const files = Object.keys(zip.files);
-                for (let i = 0; i < files.length; i++) {
-                    const file = zip.files[files[i]];
-                    if (file.dir) continue;
-                    const name = files[i].split('/').pop();
-                    const data = await file.async("uint8array");
-                    const blob = new Blob([data], { type: name.endsWith('.png') ? 'image/png' : 'application/octet-stream' });
-                    blobMap.set(name, blob);
-                    urlMap.set(name, URL.createObjectURL(blob));
-                    document.getElementById('percentage').innerText = (40 + Math.floor((i/files.length)*60)) + '%';
-                    document.getElementById('bar').style.width = (40 + Math.floor((i/files.length)*60)) + '%';
-                }
-
-                document.getElementById('loader-ui').style.display = 'none';
-                document.getElementById('play-button').style.display = 'block';
-            } catch (e) {
-                document.getElementById('stage').innerText = "ERROR: " + e.message;
+// --- THE CRITICAL FIX: FORCING THE ENGINE TO SEE OUR UNZIPPED FILES ---
+const OriginalImage = window.Image;
+window.Image = function() {
+    const img = new OriginalImage();
+    const setter = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src').set;
+    
+    Object.defineProperty(img, 'src', {
+        set: function(val) {
+            // Get just the filename (e.g., "M0001.png")
+            const filename = val.toString().split('/').pop();
+            
+            // If we have this file in our unzipped memory, use our Blob URL instead
+            if (urlMap.has(filename)) {
+                setter.call(this, urlMap.get(filename));
+            } else {
+                setter.call(this, val);
             }
         }
+    });
+    return img;
+};
 
-        document.getElementById('play-button').onclick = () => {
-            const AC = window.AudioContext || window.webkitAudioContext;
-            if (AC) new AC().resume();
-            document.getElementById('selection').style.display = 'none';
-            document.getElementById('MMFCanvas').style.display = 'block';
+// Hook Fetch & XHR (Backups for other data types)
+const ogFetch = window.fetch;
+window.fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input.url;
+    const name = url.split('/').pop();
+    if (blobMap.has(name)) return new Response(blobMap.get(name));
+    return ogFetch(input, init);
+};
 
-            const script = document.createElement('script');
-            script.src = "Runtime.js";
-            script.onload = () => {
-                const cch = Array.from(urlMap.keys()).find(k => k.toLowerCase().endsWith('.cch'));
-                new Runtime("MMFCanvas", cch);
-            };
-            document.head.appendChild(script);
-        };
+const ogOpen = XMLHttpRequest.prototype.open;
+XMLHttpRequest.prototype.open = function(m, url) {
+    const name = url.toString().split('/').pop();
+    if (urlMap.has(name)) url = urlMap.get(name);
+    return ogOpen.apply(this, arguments);
+};
 
-        window.onload = init;
-    </script>
-</body>
-</html>
+async function init() {
+    try {
+        let chunks = [];
+        // 1. Download the parts
+        for (let i = 1; i <= 20; i++) {
+            document.getElementById('percentage').innerText = Math.floor((i/20)*40) + '%';
+            document.getElementById('bar').style.width = Math.floor((i/20)*40) + '%';
+            const res = await ogFetch(`resources.zip.part${i}`);
+            if (!res.ok) throw new Error("Missing part " + i);
+            chunks.push(await res.arrayBuffer());
+        }
+
+        // 2. Combine and Unzip
+        const zip = await JSZip.loadAsync(new Blob(chunks));
+        const files = Object.keys(zip.files);
+        
+        for (let i = 0; i < files.length; i++) {
+            const file = zip.files[files[i]];
+            if (file.dir) continue;
+
+            const name = files[i].split('/').pop();
+            const data = await file.async("uint8array");
+            
+            // Create a local URL for the file
+            const blob = new Blob([data], { type: name.endsWith('.png') ? 'image/png' : 'application/octet-stream' });
+            blobMap.set(name, blob);
+            urlMap.set(name, URL.createObjectURL(blob));
+
+            // Update loading bar (remaining 60%)
+            document.getElementById('percentage').innerText = (40 + Math.floor((i/files.length)*60)) + '%';
+            document.getElementById('bar').style.width = (40 + Math.floor((i/files.length)*60)) + '%';
+        }
+
+        document.getElementById('loader-ui').style.display = 'none';
+        document.getElementById('play-button').style.display = 'block';
+    } catch (e) {
+        console.error(e);
+        document.getElementById('stage').innerText = "ERROR: " + e.message;
+    }
+}
+
+document.getElementById('play-button').onclick = () => {
+    // Unlock Audio for browsers
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) new AC().resume();
+    
+    document.getElementById('selection').style.display = 'none';
+    document.getElementById('MMFCanvas').style.display = 'block';
+
+    const script = document.createElement('script');
+    script.src = "Runtime.js";
+    script.onload = () => {
+        // Find the .cch file in our unzipped list and start
+        const cchFile = Array.from(urlMap.keys()).find(k => k.toLowerCase().endsWith('.cch'));
+        if (cchFile) {
+            new Runtime("MMFCanvas", cchFile);
+        } else {
+            alert("Error: .cch game file not found in zip!");
+        }
+    };
+    document.head.appendChild(script);
+};
+
+window.onload = init;
