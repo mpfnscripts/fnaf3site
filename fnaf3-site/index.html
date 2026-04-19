@@ -11,9 +11,9 @@
         canvas { display: none; user-select: none; }
         .loader { position: absolute; display: flex; flex-direction: column; align-items: center; z-index: 1; text-align: center; width: 85vw; }
         .loader h1 { margin: 0; font-size: 5vw; }
-        #bar-container { margin: 10px 0; border: white solid 1px; width: 300px; height: 10px; }
-        #bar-fill { background: white; width: 0%; height: 100%; transition: width 0.2s; }
-        #stage { font-size: 1.4vw; color: #aaa; }
+        #bar-container { margin: 10px 0; border: white solid 1px; width: 300px; height: 12px; background: #111; }
+        #bar-fill { background: white; width: 0%; height: 100%; transition: width 0.1s; }
+        #stage { font-size: 1.4vw; color: #aaa; text-transform: uppercase; }
     </style>
 </head>
 <body>
@@ -21,24 +21,25 @@
     <div class="loader" id="loader-ui">
         <h1 id="percentage">0%</h1>
         <div id="bar-container"><div id="bar-fill"></div></div>
-        <h2 id="stage">INITIALIZING...</h2>
+        <h2 id="stage">Initializing...</h2>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
     <script>
         const totalParts = 20;
-        const map = new Map();
+        const assetMap = new Map();
 
-        // PATCH 1: Intercept background Image loading for textures (M0001.png, etc.)
+        // 1. IMAGE INTERCEPTOR (Fixes 404s for M000x.png files)
         const OriginalImage = window.Image;
         window.Image = function() {
             const img = new OriginalImage();
             Object.defineProperty(img, 'src', {
                 set(url) {
+                    // Extract just the filename (e.g., "M0001.png")
                     const name = url.toString().split('/').pop();
-                    if (map.has(name)) {
-                        this.setAttribute('src', map.get(name));
+                    if (assetMap.has(name)) {
+                        this.setAttribute('src', assetMap.get(name));
                     } else {
                         this.setAttribute('src', url);
                     }
@@ -51,23 +52,23 @@
         function updateProgress(text, percent) {
             document.getElementById('percentage').innerText = percent + '%';
             document.getElementById('bar-fill').style.width = percent + '%';
-            document.getElementById('stage').innerText = text.toUpperCase();
+            document.getElementById('stage').innerText = text;
         }
 
         async function start() {
             try {
                 let chunks = [];
 
-                // 1. DOWNLOAD ALL PARTS
+                // Step A: Download the 20 split zip files
                 for (let i = 1; i <= totalParts; i++) {
-                    updateProgress(`FETCHING DATA (PART ${i})...`, Math.floor((i / totalParts) * 40));
+                    updateProgress(`Fetching Data Part ${i}...`, Math.floor((i / totalParts) * 40));
                     const response = await fetch(`resources.zip.part${i}`);
-                    if (!response.ok) throw new Error(`Missing resources.zip.part${i}`);
+                    if (!response.ok) throw new Error(`Could not load resources.zip.part${i}`);
                     chunks.push(await response.arrayBuffer());
                 }
 
-                // 2. MERGE AND UNPACK
-                updateProgress("STITCHING ARCHIVE...", 45);
+                // Step B: Stitch and Unzip
+                updateProgress("Stitching Archive...", 45);
                 const zip = await JSZip.loadAsync(new Blob(chunks));
                 const files = Object.keys(zip.files);
                 
@@ -76,58 +77,65 @@
                     if (!file.dir) {
                         const fileName = files[i].split('/').pop();
                         
-                        // Convert textures to Base64 to prevent ERR_FILE_NOT_FOUND
-                        if (/\.(png|jpg|jpeg)$/i.test(fileName)) {
-                            const base64 = await file.async("base64");
-                            map.set(fileName, `data:image/png;base64,${base64}`);
+                        // Use Base64 for images (most stable for textures)
+                        if (/\.(png|jpg|jpeg|gif)$/i.test(fileName)) {
+                            const b64 = await file.async("base64");
+                            assetMap.set(fileName, `data:image/png;base64,${b64}`);
                         } else {
+                            // Use Blobs for the .cch and sound files
                             const content = await file.async("blob");
-                            map.set(fileName, URL.createObjectURL(content));
+                            assetMap.set(fileName, URL.createObjectURL(content));
                         }
                     }
-                    updateProgress("PREPARING ASSETS...", 50 + Math.floor((i / files.length) * 45));
+                    updateProgress("Unpacking Assets...", 50 + Math.floor((i / files.length) * 45));
                 }
 
-                // PATCH 2: Intercept XMLHttpRequest (The engine uses this for the .cch file)
+                // 2. XHR INTERCEPTOR (Fixes ERR_FILE_NOT_FOUND for .cch file)
                 const originalOpen = XMLHttpRequest.prototype.open;
                 XMLHttpRequest.prototype.open = function(method, url) {
                     const name = url.toString().split('/').pop();
-                    if (map.has(name)) {
-                        url = map.get(name);
+                    if (assetMap.has(name)) {
+                        // Swap the requested URL with our memory Blob URL
+                        arguments[1] = assetMap.get(name);
                     }
-                    return originalOpen.apply(this, [method, url]);
+                    return originalOpen.apply(this, arguments);
                 };
 
-                // PATCH 3: Global Fetch Interceptor
+                // 3. FETCH INTERCEPTOR (Extra layer for modern loaders)
                 const ogFetch = window.fetch;
-                window.fetch = async (url) => {
+                window.fetch = async (url, options) => {
                     const name = url.toString().split('/').pop();
-                    if (map.has(name)) return ogFetch(map.get(name));
-                    return ogFetch(url);
+                    if (assetMap.has(name)) return ogFetch(assetMap.get(name), options);
+                    return ogFetch(url, options);
                 };
 
-                // 3. START RUNTIME
-                updateProgress("LAUNCHING...", 100);
+                // Step C: Launch the Engine
+                updateProgress("Launching...", 100);
                 const script = document.createElement('script');
                 script.src = 'Runtime.js';
                 script.onload = () => {
                     document.getElementById('loader-ui').style.display = 'none';
                     document.getElementById('MMFCanvas').style.display = 'block';
                     
+                    // Tell the engine to ignore the 'resources/' folder prefix
                     window.resourcesPath = ""; 
-                    // Auto-detect the .cch file regardless of path
-                    const brain = Array.from(map.keys()).find(k => k.toLowerCase().endsWith('.cch'));
+
+                    // Automatically find the .cch file in our map
+                    const cchKey = Array.from(assetMap.keys()).find(k => k.toLowerCase().endsWith('.cch'));
                     
-                    if (brain) {
-                        new Runtime("MMFCanvas", map.get(brain));
-                    } else {
-                        alert("Could not find .cch game file in the zip.");
+                    if (!cchKey) {
+                        alert("Error: Game data (.cch) not found in the uploaded ZIP parts.");
+                        return;
                     }
+
+                    // Start the game using the memory URL
+                    new Runtime("MMFCanvas", assetMap.get(cchKey));
                 };
                 document.head.appendChild(script);
 
             } catch (err) {
                 document.getElementById('stage').innerHTML = `<span style="color:red">ERROR: ${err.message}</span>`;
+                console.error(err);
             }
         }
 
