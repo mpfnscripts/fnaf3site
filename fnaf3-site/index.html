@@ -11,7 +11,8 @@
         canvas { display: none; user-select: none; }
         .loader { position: absolute; display: flex; flex-direction: column; align-items: center; z-index: 1; text-align: center; width: 85vw; }
         .loader h1 { margin: 0; font-size: 5vw; }
-        #bar { margin: 10px 0; border: white solid 1px; width: 0%; transition: width 0.2s; }
+        #bar-container { margin: 10px 0; border: white solid 1px; width: 300px; height: 10px; }
+        #bar-fill { background: white; width: 0%; height: 100%; transition: width 0.2s; }
         #stage { font-size: 1.4vw; color: #aaa; }
     </style>
 </head>
@@ -19,7 +20,7 @@
     <canvas id="MMFCanvas" width="1024" height="768"></canvas>
     <div class="loader" id="loader-ui">
         <h1 id="percentage">0%</h1>
-        <hr id="bar">
+        <div id="bar-container"><div id="bar-fill"></div></div>
         <h2 id="stage">INITIALIZING...</h2>
     </div>
 
@@ -29,60 +30,100 @@
         const totalParts = 20;
         const map = new Map();
 
+        // FIX 1: Intercept 'new Image()' for the M000x.png textures
+        const OriginalImage = window.Image;
+        window.Image = function() {
+            const img = new OriginalImage();
+            Object.defineProperty(img, 'src', {
+                set(url) {
+                    const name = url.toString().split('/').pop();
+                    if (map.has(name)) {
+                        this.setAttribute('src', map.get(name));
+                    } else {
+                        this.setAttribute('src', url);
+                    }
+                },
+                get() { return this.getAttribute('src'); }
+            });
+            return img;
+        };
+
         function updateProgress(text, percent) {
             document.getElementById('percentage').innerText = percent + '%';
-            document.getElementById('bar').style.width = percent + '%';
+            document.getElementById('bar-fill').style.width = percent + '%';
             document.getElementById('stage').innerText = text.toUpperCase();
         }
 
         async function start() {
             try {
                 let chunks = [];
-                let loadedBytes = 0;
 
                 // 1. DOWNLOAD ALL PARTS
                 for (let i = 1; i <= totalParts; i++) {
-                    updateProgress(`FETCHING DATA (PART ${i})...`, Math.floor((i / totalParts) * 50));
+                    updateProgress(`FETCHING DATA (PART ${i})...`, Math.floor((i / totalParts) * 40));
                     const response = await fetch(`resources.zip.part${i}`);
                     if (!response.ok) throw new Error(`Missing resources.zip.part${i}`);
-                    const buffer = await response.arrayBuffer();
-                    chunks.push(buffer);
+                    chunks.push(await response.arrayBuffer());
                 }
 
-                // 2. MERGE PARTS
-                updateProgress("STITCHING ARCHIVE...", 55);
-                const blob = new Blob(chunks);
-                const fullBuffer = await blob.arrayBuffer();
-
-                // 3. EXTRACT FILES
-                updateProgress("UNPACKING ASSETS...", 70);
-                const zip = await JSZip.loadAsync(fullBuffer);
+                // 2. UNPACK AND CONVERT IMAGES TO BASE64 (Fixes ERR_FILE_NOT_FOUND)
+                updateProgress("EXTRACTING ASSETS...", 50);
+                const zip = await JSZip.loadAsync(new Blob(chunks));
                 const files = Object.keys(zip.files);
                 
                 for (let i = 0; i < files.length; i++) {
                     const file = zip.files[files[i]];
                     if (!file.dir) {
-                        const content = await file.async("blob");
-                        map.set(files[i], URL.createObjectURL(content));
+                        const fileName = files[i].split('/').pop();
+                        
+                        if (/\.(png|jpg|jpeg)$/i.test(fileName)) {
+                            // Convert images to Base64 so they stay in memory permanently
+                            const base64 = await file.async("base64");
+                            map.set(fileName, `data:image/png;base64,${base64}`);
+                        } else {
+                            // Use Blob URLs for the .cch file
+                            const content = await file.async("blob");
+                            map.set(fileName, URL.createObjectURL(content));
+                        }
                     }
-                    updateProgress("BOOTING ARCHIVE...", 70 + Math.floor((i / files.length) * 30));
+                    updateProgress("PREPARING TEXTURES...", 50 + Math.floor((i / files.length) * 45));
                 }
 
-                // 4. INTERCEPT LOADING
+                // FIX 2: Patch XMLHttpRequest (The engine uses this for the .cch file)
+                const originalOpen = XMLHttpRequest.prototype.open;
+                XMLHttpRequest.prototype.open = function(method, url) {
+                    const name = url.toString().split('/').pop();
+                    if (map.has(name)) {
+                        url = map.get(name);
+                    }
+                    return originalOpen.apply(this, [method, url]);
+                };
+
+                // FIX 3: Patch Fetch (For everything else)
                 const ogFetch = window.fetch;
                 window.fetch = async (url) => {
                     const name = url.toString().split('/').pop();
-                    if (map.has(name)) return new Response(await (await fetch(map.get(name))).blob());
+                    if (map.has(name)) return ogFetch(map.get(name));
                     return ogFetch(url);
                 };
 
-                // 5. START RUNTIME
+                // 3. START ENGINE
+                updateProgress("LAUNCHING...", 100);
                 const script = document.createElement('script');
                 script.src = 'Runtime.js';
                 script.onload = () => {
                     document.getElementById('loader-ui').style.display = 'none';
                     document.getElementById('MMFCanvas').style.display = 'block';
-                    new Runtime("MMFCanvas", "resources/fnaf 3.cch");
+                    
+                    window.resourcesPath = ""; 
+                    const brain = Array.from(map.keys()).find(k => k.toLowerCase().endsWith('.cch'));
+                    
+                    if (!brain) {
+                        alert("FATAL ERROR: Game data (.cch) not found in ZIP parts.");
+                        return;
+                    }
+
+                    new Runtime("MMFCanvas", map.get(brain));
                 };
                 document.head.appendChild(script);
 
