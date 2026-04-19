@@ -1,154 +1,163 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>FNAF 4 - Web Port</title>
-    <link rel="stylesheet" href="style.css">
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Five Nights at Freddy's 4</title>
+    <link rel="icon" href="favicon.ico" />
+    <style>
+        html { display: block; background: #000; -webkit-user-select: none; user-select: none; overflow: hidden; height: 100%; }
+        body { position: relative; background-color: black; display: flex; align-items: center; justify-content: center; margin: 0; height: 100%; color: white; font-family: monospace; }
+        canvas { display: none; }
+        .loader { position: absolute; display: flex; flex-direction: column; align-items: center; z-index: 5; text-align: center; width: 85vw; }
+        #bar-container { width: 100%; border: 1px solid #333; height: 4px; margin: 10px 0; }
+        #bar { background: white; width: 0%; height: 100%; transition: width 0.1s; }
+        #play-zone { display: none; z-index: 10; text-align: center; }
+        #play-button { background: #111; border: 2px solid white; color: white; padding: 20px 50px; font-size: 24px; cursor: pointer; }
+        #play-button:hover { background: white; color: black; }
+    </style>
 </head>
 <body>
-
-    <div id="selection">
-        <div id="loader-ui">
-            <img src="launcher-text.png" id="launcher-text" alt="Loading...">
-            <div id="progress-container">
-                <div id="bar"></div>
-            </div>
-            <p id="percentage">0%</p>
-        </div>
-        
-        <button id="play-button" style="display:none;">START GAME</button>
+    <canvas id="MMFCanvas" width="1024" height="768"></canvas>
+    
+    <div class="loader" id="loader-ui">
+        <h1 id="percentage">0%</h1>
+        <div id="bar-container"><div id="bar"></div></div>
+        <h2 id="stage" style="font-size: 12px; color: #666;">INITIALIZING...</h2>
     </div>
 
-    <canvas id="MMFCanvas" width="1024" height="768" style="display:none;"></canvas>
+    <div id="play-zone">
+        <button id="play-button">START GAME</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
     <script>
+        const totalParts = 20;
         const blobMap = new Map();
         const urlMap = new Map();
 
-        // --- 1. THE INTERCEPTOR (Monkey Patch) ---
-        // This stops the 404 errors by redirecting image requests to our unzipped Blobs
+        function updateProgress(text, percent) {
+            document.getElementById('percentage').innerText = percent + '%';
+            document.getElementById('bar').style.width = percent + '%';
+            document.getElementById('stage').innerText = text.toUpperCase();
+        }
+
+        async function start() {
+            try {
+                let chunks = [];
+                // 1. Download the 20 zip parts
+                for (let i = 1; i <= totalParts; i++) {
+                    updateProgress(`LOADING PART ${i}`, Math.floor((i / totalParts) * 40));
+                    const res = await fetch(`resources.zip.part${i}`);
+                    if (!res.ok) throw new Error(`Part ${i} failed to download.`);
+                    chunks.push(await res.arrayBuffer());
+                }
+
+                updateProgress("EXTRACTING", 50);
+                const zip = await JSZip.loadAsync(new Blob(chunks));
+                const files = Object.keys(zip.files);
+                
+                // 2. Map files to Blobs and local URLs
+                for (let i = 0; i < files.length; i++) {
+                    const file = zip.files[files[i]];
+                    if (!file.dir) {
+                        const name = files[i].split('/').pop();
+                        const data = await file.async("uint8array");
+                        const type = name.endsWith('.png') ? 'image/png' : 'application/octet-stream';
+                        const blob = new Blob([data], { type: type });
+                        blobMap.set(name, blob);
+                        urlMap.set(name, URL.createObjectURL(blob));
+                    }
+                    updateProgress("MAPPING", 50 + Math.floor((i / files.length) * 45));
+                }
+
+                document.getElementById('loader-ui').style.display = 'none';
+                document.getElementById('play-zone').style.display = 'block';
+
+            } catch (err) {
+                console.error(err);
+                document.getElementById('stage').innerText = "FATAL ERROR: " + err.message;
+            }
+        }
+
+        // --- INTERCEPTORS ---
+        const ogFetch = window.fetch;
+        window.fetch = async (input, init) => {
+            const url = typeof input === 'string' ? input : input.url;
+            const name = url.split('/').pop();
+            if (blobMap.has(name)) {
+                const response = new Response(blobMap.get(name));
+                Object.defineProperty(response, 'url', { value: url });
+                return response;
+            }
+            return ogFetch(input, init);
+        };
+
+        const originalOpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function(method, url) {
+            this._url = url.toString();
+            const name = this._url.split('/').pop();
+            if (urlMap.has(name)) url = urlMap.get(name);
+            return originalOpen.apply(this, [method, url]);
+        };
+
         const OriginalImage = window.Image;
         window.Image = function() {
             const img = new OriginalImage();
             const setter = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src').set;
-            
             Object.defineProperty(img, 'src', {
-                set: function(val) {
-                    const filename = val.toString().split('/').pop();
-                    if (urlMap.has(filename)) {
-                        setter.call(this, urlMap.get(filename));
-                    } else {
-                        setter.call(this, val);
-                    }
+                set: function(url) {
+                    const name = url.toString().split('/').pop();
+                    if (urlMap.has(name)) setter.call(this, urlMap.get(name));
+                    else setter.call(this, url);
                 }
             });
             return img;
         };
 
-        // Hook Fetch and XHR as backups for data files
-        const ogFetch = window.fetch;
-        window.fetch = async (input, init) => {
-            const url = typeof input === 'string' ? input : input.url;
-            const name = url.split('/').pop();
-            if (blobMap.has(name)) return new Response(blobMap.get(name));
-            return ogFetch(input, init);
+        // --- AUDIO ENGINE RESCUE ---
+        function forceUnlockAudio() {
+            const contexts = [];
+            const AC = window.AudioContext || window.webkitAudioContext;
+            if (AC) contexts.push(new AC());
+            for (let key in window) {
+                if (window[key] instanceof AC) contexts.push(window[key]);
+            }
+            contexts.forEach(ctx => {
+                if (ctx.state === 'suspended') ctx.resume();
+            });
+        }
+
+        // --- START GAME CLICK ---
+        document.getElementById('play-button').onclick = function() {
+            document.getElementById('play-zone').style.display = 'none';
+            document.getElementById('MMFCanvas').style.display = 'block';
+
+            forceUnlockAudio();
+
+            const script = document.createElement('script');
+            script.src = 'Runtime.js';
+            script.onload = () => {
+                window.resourcesPath = "";
+                // Find the .cch data file automatically
+                const cchFile = Array.from(urlMap.keys()).find(f => f.toLowerCase().endsWith('.cch'));
+                
+                // Fallback attempt to unlock audio after engine starts
+                setTimeout(forceUnlockAudio, 1000);
+                
+                if (cchFile) {
+                    // Pass the BLOB URL of the .cch file to the Runtime
+                    new Runtime("MMFCanvas", urlMap.get(cchFile));
+                } else {
+                    // If no .cch is in the zip, it tries to fetch fnaf4.cch from the server
+                    new Runtime("MMFCanvas", "fnaf4.cch");
+                }
+            };
+            document.head.appendChild(script);
         };
 
-        // --- 2. INITIALIZATION (Download & Unzip) ---
-        async function init() {
-            try {
-                let chunks = [];
-                // Download the 20 parts
-                for (let i = 1; i <= 20; i++) {
-                    const res = await ogFetch(`resources.zip.part${i}`);
-                    if (!res.ok) throw new Error("Missing part " + i);
-                    chunks.push(await res.arrayBuffer());
-                    
-                    // Update Progress (0% to 50%)
-                    let p = Math.floor((i / 20) * 50);
-                    document.getElementById('percentage').innerText = p + '%';
-                    document.getElementById('bar').style.width = p + '%';
-                }
-
-                // Combine and Load Zip
-                const zip = await JSZip.loadAsync(new Blob(chunks));
-                const files = Object.keys(zip.files);
-                
-                // Extract every file into memory
-                let processed = 0;
-                for (let filename of files) {
-                    const file = zip.files[filename];
-                    if (file.dir) continue;
-
-                    const shortName = filename.split('/').pop();
-                    const data = await file.async("uint8array");
-                    
-                    const type = shortName.endsWith('.png') ? 'image/png' : 'application/octet-stream';
-                    const blob = new Blob([data], { type: type });
-                    
-                    blobMap.set(shortName, blob);
-                    urlMap.set(shortName, URL.createObjectURL(blob));
-
-                    processed++;
-                    // Update Progress (50% to 100%)
-                    let p = 50 + Math.floor((processed / files.length) * 50);
-                    document.getElementById('percentage').innerText = p + '%';
-                    document.getElementById('bar').style.width = p + '%';
-                }
-
-                document.getElementById('loader-ui').style.display = 'none';
-                document.getElementById('play-button').style.display = 'block';
-
-            } catch (e) {
-                console.error(e);
-                document.getElementById('percentage').innerText = "Load Error: " + e.message;
-            }
-        }
-
-        // --- 3. START GAME ---
-document.getElementById('play-button').onclick = () => {
-    // 1. Force Resume Audio Context
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (AC) {
-        const audioCtx = new AC();
-        audioCtx.resume();
-    }
-    
-    // 2. Heavy-Duty UI Cleanup
-    // Hide the selection container and clear any background images set via CSS
-    const selection = document.getElementById('selection');
-    if (selection) selection.style.display = 'none';
-    
-    document.body.style.background = "black";
-    document.body.style.backgroundImage = "none";
-
-    // 3. Prepare Canvas
-    const canvas = document.getElementById('MMFCanvas');
-    canvas.style.display = 'block';
-    canvas.focus();
-
-    // 4. Load Engine
-    const script = document.createElement('script');
-    script.src = "Runtime.js";
-    script.onload = () => {
-        // Find the .cch file
-        const cchFileName = Array.from(urlMap.keys()).find(k => k.toLowerCase().endsWith('.cch'));
-        
-        if (cchFileName) {
-            // CRITICAL: We must pass the BLOBS URL, not just the string name
-            const gameDataUrl = urlMap.get(cchFileName);
-            console.log("Starting game with data:", cchFileName);
-            
-            // Initialize the engine
-            window.fnafRuntime = new Runtime("MMFCanvas", gameDataUrl);
-        } else {
-            alert("Error: .cch game file (the actual game data) not found in your zip!");
-        }
-    };
-    document.head.appendChild(script);
-};
-
-        window.onload = init;
+        window.onload = start;
     </script>
 </body>
 </html>
