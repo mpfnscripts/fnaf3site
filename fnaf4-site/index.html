@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Five Nights at Freddy's 4</title>
+    <link rel="icon" href="data:image/x-icon;base64,AAABAAEAAQEAAAEAIAAwAAAAFgAAACgAAAABAAAAAgAAAAEAIAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//AAAAAA==" />
     <style>
         html { display: block; background: #000; -webkit-user-select: none; user-select: none; overflow: hidden; height: 100%; }
         body { position: relative; background-color: black; display: flex; align-items: center; justify-content: center; margin: 0; height: 100%; color: white; font-family: monospace; }
@@ -17,6 +18,7 @@
     </style>
 </head>
 <body>
+
     <canvas id="MMFCanvas" width="1024" height="768"></canvas>
     
     <div class="loader" id="loader-ui">
@@ -32,6 +34,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
     <script>
+        const totalParts = 20;
         window.blobMap = new Map();
         window.urlMap = new Map();
 
@@ -44,59 +47,53 @@
         async function start() {
             try {
                 let chunks = [];
-                for (let i = 1; i <= 20; i++) {
-                    updateProgress(`FETCHING DATA ${i}`, Math.floor((i / 20) * 40));
+                for (let i = 1; i <= totalParts; i++) {
+                    updateProgress(`LOADING PART ${i}`, Math.floor((i / totalParts) * 40));
                     const res = await fetch(`resources.zip.part${i}`);
-                    if (!res.ok) throw new Error("Part " + i + " failed.");
+                    if (!res.ok) throw new Error("Part fail");
                     chunks.push(await res.arrayBuffer());
                 }
 
-                updateProgress("DECOMPRESSING", 50);
+                updateProgress("EXTRACTING", 50);
                 const zip = await JSZip.loadAsync(new Blob(chunks));
                 const files = Object.keys(zip.files);
                 
                 for (let i = 0; i < files.length; i++) {
                     const file = zip.files[files[i]];
-                    if (file.dir) continue;
-
-                    const name = files[i].split('/').pop();
-                    const data = await file.async("uint8array");
-                    
-                    const type = name.endsWith('.png') ? 'image/png' : 'application/octet-stream';
-                    const blob = new Blob([data], { type: type });
-                    
-                    window.blobMap.set(name, blob);
-                    window.urlMap.set(name, URL.createObjectURL(blob));
+                    if (!file.dir) {
+                        const name = files[i].split('/').pop();
+                        const data = await file.async("uint8array");
+                        const type = name.endsWith('.png') ? 'image/png' : 'application/octet-stream';
+                        const blob = new Blob([data], { type: type });
+                        window.blobMap.set(name, blob);
+                        window.urlMap.set(name, URL.createObjectURL(blob));
+                    }
+                    updateProgress("MAPPING", 50 + Math.floor((i / files.length) * 45));
                 }
 
                 document.getElementById('loader-ui').style.display = 'none';
                 document.getElementById('play-zone').style.display = 'block';
 
             } catch (err) {
-                console.error(err);
                 document.getElementById('stage').innerText = "FATAL ERROR: " + err.message;
             }
         }
 
-        // --- IMPROVED INTERCEPTORS ---
-        const originalFetch = window.fetch;
+        // --- THE INTERCEPTORS (THE CRITICAL FIX) ---
+        const ogFetch = window.fetch;
         window.fetch = async (input, init) => {
             const url = typeof input === 'string' ? input : input.url;
-            const name = url.split('/').pop();
-            
+            const name = decodeURIComponent(url.split('/').pop());
             if (window.blobMap.has(name)) {
-                return new Response(window.blobMap.get(name), {
-                    status: 200,
-                    statusText: 'OK',
-                    headers: { 'Content-Type': name.endsWith('.png') ? 'image/png' : 'application/octet-stream' }
-                });
+                return new Response(window.blobMap.get(name));
             }
-            return originalFetch(input, init);
+            return ogFetch(input, init);
         };
 
         const originalOpen = XMLHttpRequest.prototype.open;
         XMLHttpRequest.prototype.open = function(method, url) {
-            const name = url.toString().split('/').pop();
+            // Decode %20 (spaces) so it matches "fnaf 4.cch"
+            const name = decodeURIComponent(url.toString().split('/').pop());
             if (window.urlMap.has(name)) {
                 url = window.urlMap.get(name);
             }
@@ -108,47 +105,45 @@
             const img = new OriginalImage();
             const setter = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src').set;
             Object.defineProperty(img, 'src', {
-                set: function(val) {
-                    const name = val.toString().split('/').pop();
-                    if (window.urlMap.has(name)) {
-                        setter.call(this, window.urlMap.get(name));
-                    } else {
-                        setter.call(this, val);
-                    }
+                set: function(url) {
+                    const name = decodeURIComponent(url.toString().split('/').pop());
+                    if (window.urlMap.has(name)) setter.call(this, window.urlMap.get(name));
+                    else setter.call(this, url);
                 }
             });
             return img;
         };
 
+        function forceUnlockAudio() {
+            const AC = window.AudioContext || window.webkitAudioContext;
+            if (AC) {
+                const ctx = new AC();
+                ctx.resume();
+            }
+        }
+
         document.getElementById('play-button').onclick = function() {
             document.getElementById('play-zone').style.display = 'none';
             document.getElementById('MMFCanvas').style.display = 'block';
 
-            // Audio Unlock
-            const AC = window.AudioContext || window.webkitAudioContext;
-            if (AC) { const ctx = new AC(); ctx.resume(); }
+            forceUnlockAudio();
 
             const script = document.createElement('script');
             script.src = 'Runtime.js';
             script.onload = () => {
-                // Find the .cch file
-                const cchFile = Array.from(window.urlMap.keys()).find(f => f.toLowerCase().endsWith('.cch'));
+                window.resourcesPath = "";
+                const cch = Array.from(window.urlMap.keys()).find(f => f.toLowerCase().endsWith('.cch'));
                 
-                if (cchFile) {
-                    const dataUrl = window.urlMap.get(cchFile);
-                    console.log("Launching Game Data:", cchFile);
-                    
-                    // We pass the BLOB URL directly. 
-                    // If it fails with "File Not Found", the engine might not support Blobs for the main CCH.
-                    // In that case, we fall back to the filename and let the XHR interceptor handle it.
-                    try {
-                        new Runtime("MMFCanvas", dataUrl);
-                    } catch(e) {
-                        new Runtime("MMFCanvas", cchFile);
-                    }
+                // Use the plain string name so the XHR Interceptor can handle the redirect properly
+                // This avoids the ERR_FILE_NOT_FOUND blob error.
+                if (cch) {
+                    console.log("Starting engine with: " + cch);
+                    new Runtime("MMFCanvas", cch);
                 } else {
-                    alert("No .cch file found in zip!");
+                    new Runtime("MMFCanvas", "fnaf4.cch");
                 }
+                
+                setTimeout(forceUnlockAudio, 1000);
             };
             document.head.appendChild(script);
         };
