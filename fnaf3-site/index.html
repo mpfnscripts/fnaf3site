@@ -9,18 +9,47 @@
         html { display: block; -webkit-user-select: none; user-select: none; overflow: hidden; height: 100%; }
         body { position: relative; background-color: black; display: flex; align-items: center; justify-content: center; margin: 0; height: 100%; color: white; font-family: monospace; }
         canvas { display: none; user-select: none; }
+        
         .loader { position: absolute; display: flex; flex-direction: column; align-items: center; z-index: 1; text-align: center; width: 85vw; }
         .loader h1 { margin: 0; font-size: 5vw; }
         #bar { margin: 10px 0; border: white solid 1px; width: 0%; transition: width 0.2s; height: 2px; }
         #stage { font-size: 1.4vw; color: #aaa; }
+
+        /* The Play Button Styling */
+        #play-zone { 
+            display: none; 
+            position: absolute; 
+            z-index: 10; 
+            text-align: center; 
+        }
+        #play-button {
+            background: none;
+            border: 2px solid white;
+            color: white;
+            padding: 15px 40px;
+            font-size: 24px;
+            font-family: monospace;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        #play-button:hover {
+            background: white;
+            color: black;
+        }
     </style>
 </head>
 <body>
     <canvas id="MMFCanvas" width="1024" height="768"></canvas>
+    
     <div class="loader" id="loader-ui">
         <h1 id="percentage">0%</h1>
         <div id="bar"></div>
         <h2 id="stage">INITIALIZING...</h2>
+    </div>
+
+    <div id="play-zone">
+        <button id="play-button">START GAME</button>
+        <p style="margin-top:10px; color:#666;">(Activates Audio)</p>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -29,7 +58,7 @@
         const totalParts = 20;
         const map = new Map();
 
-        // Intercept Images immediately
+        // 1. Image Interceptor
         const OriginalImage = window.Image;
         window.Image = function() {
             const img = new OriginalImage();
@@ -53,8 +82,6 @@
         async function start() {
             try {
                 let chunks = [];
-
-                // 1. Download Parts
                 for (let i = 1; i <= totalParts; i++) {
                     updateProgress(`FETCHING DATA (PART ${i})...`, Math.floor((i / totalParts) * 40));
                     const response = await fetch(`resources.zip.part${i}`);
@@ -62,7 +89,6 @@
                     chunks.push(await response.arrayBuffer());
                 }
 
-                // 2. Unpack with Uint8Array
                 updateProgress("UNPACKING ASSETS...", 50);
                 const zip = await JSZip.loadAsync(new Blob(chunks));
                 const files = Object.keys(zip.files);
@@ -78,54 +104,53 @@
                     updateProgress("PREPARING MEMORY...", 50 + Math.floor((i / files.length) * 45));
                 }
 
-                // 3. XHR Interceptor
+                // 2. XHR Interceptor
                 const originalOpen = XMLHttpRequest.prototype.open;
                 XMLHttpRequest.prototype.open = function(method, url) {
                     const name = url.toString().split('/').pop();
-                    if (map.has(name)) {
-                        url = map.get(name);
-                    }
+                    if (map.has(name)) url = map.get(name);
                     return originalOpen.apply(this, [method, url]);
                 };
 
-                // 4. Final Launch
-                updateProgress("LAUNCHING...", 100);
-                const script = document.createElement('script');
-                script.src = 'Runtime.js';
-                script.onload = () => {
+                // 3. Show Play Button instead of auto-launching
+                updateProgress("READY", 100);
+                setTimeout(() => {
                     document.getElementById('loader-ui').style.display = 'none';
-                    document.getElementById('MMFCanvas').style.display = 'block';
-                    
-                    window.resourcesPath = ""; 
-                    
-                    const cchFile = Array.from(map.keys()).find(f => f.toLowerCase().endsWith('.cch'));
-                    if (!cchFile) throw new Error("Game data (.cch) not found in ZIP!");
-                    
-                    // --- AUDIO PATCH START ---
-                    const resumeAudio = () => {
-                        const AC = window.AudioContext || window.webkitAudioContext;
-                        if (AC) {
-                            const dummy = new AC();
-                            if (dummy.state === 'suspended') dummy.resume();
-                        }
-                        // Clickteam specific audio resume
-                        if (window.activeAudioContext) window.activeAudioContext.resume();
-                        
-                        window.removeEventListener('click', resumeAudio);
-                        window.removeEventListener('keydown', resumeAudio);
-                    };
-                    window.addEventListener('click', resumeAudio);
-                    window.addEventListener('keydown', resumeAudio);
-                    // --- AUDIO PATCH END ---
+                    document.getElementById('play-zone').style.display = 'block';
+                }, 500);
 
-                    new Runtime("MMFCanvas", cchFile);
+                document.getElementById('play-button').onclick = function() {
+                    launchGame();
                 };
-                document.head.appendChild(script);
 
             } catch (err) {
                 document.getElementById('stage').innerHTML = `<span style="color:red">ERROR: ${err.message}</span>`;
-                console.error(err);
             }
+        }
+
+        function launchGame() {
+            // Hide the play button
+            document.getElementById('play-zone').style.display = 'none';
+            document.getElementById('MMFCanvas').style.display = 'block';
+
+            // --- AGGRESSIVE AUDIO ACTIVATION ---
+            const AC = window.AudioContext || window.webkitAudioContext;
+            if (AC) {
+                const actx = new AC();
+                actx.resume(); // Wake up the generic context
+            }
+            // If the runtime already initialized a context, resume it
+            if (window.activeAudioContext) window.activeAudioContext.resume();
+
+            // Load and Run
+            const script = document.createElement('script');
+            script.src = 'Runtime.js';
+            script.onload = () => {
+                window.resourcesPath = ""; 
+                const cchFile = Array.from(map.keys()).find(f => f.toLowerCase().endsWith('.cch'));
+                new Runtime("MMFCanvas", cchFile);
+            };
+            document.head.appendChild(script);
         }
 
         window.onload = start;
