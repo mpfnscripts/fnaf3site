@@ -7,159 +7,118 @@
     <link rel="icon" href="favicon.ico" />
     <style>
         html { display: block; -webkit-user-select: none; user-select: none; overflow: hidden; height: 100%; background: #000; }
-        body { 
-            position: relative; 
-            background-color: black; 
-            background-image: url('office.png'); 
-            background-position: center; 
-            background-size: cover; 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            margin: 0; 
-            height: 100%; 
-            overflow: hidden; 
-        }
-        
-        .selection { height: 100vh; width: 100%; display: flex; overflow: hidden; position: relative; z-index: 2; }
-        .launcher-text { position: absolute; left: 50%; transform: translate(-50%, 0); bottom: 2.5vh; z-index: 3; cursor: pointer; }
+        body { position: relative; background: #000 url('office.png') no-repeat center; background-size: cover; display: flex; align-items: center; justify-content: center; margin: 0; height: 100%; overflow: hidden; }
+        .selection { height: 100vh; width: 100%; display: flex; position: relative; z-index: 2; }
+        .launcher-text { position: absolute; left: 50%; transform: translate(-50%, 0); bottom: 2.5vh; z-index: 3; }
         .vignette { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 4; }
-        
-        .glitch { 
-            position: absolute; 
-            background-image: url('background.gif'); 
-            background-position: center; 
-            background-size: 50vw; 
-            top: 0; left: 0; width: 100vw; height: 100vh; 
-            pointer-events: none; opacity: 0.15; z-index: 1; 
-        }
-        
-        canvas { display: none; user-select: none; position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 10; background: #000; }
-
+        .glitch { position: absolute; background-image: url('background.gif'); background-position: center; background-size: 50vw; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; opacity: 0.15; z-index: 1; }
+        canvas { display: none; position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 10; background: #000; }
         #title { position: absolute; top: 10vh; left: 5vw; z-index: 3; height: 20vh; }
         #animatronic { position: absolute; top: -5vh; right: 7vw; height: 120vh; z-index: 2; }
-
         .loader { position: absolute; display: flex; flex-direction: column; align-items: center; left: 50%; transform: translate(-50%, 0); bottom: 12vh; z-index: 5; color: white; font-family: monospace; text-align: center; width: 85vw; }
-        .loader h1 { margin: 0; font-size: 5vw; text-shadow: 0 0 10px red; }
         #bar-box { width: 100%; border: 1px solid #333; height: 6px; margin: 10px 0; background: #111; }
-        #bar { width: 0%; height: 100%; transition: width 0.2s; background: red; }
-        #stage { font-size: 1.4vw; color: #aaa; text-transform: uppercase; }
-
-        #play-button { 
-            display: none; position: absolute; left: 50%; bottom: 15vh; transform: translateX(-50%);
-            background: #111; border: 2px solid red; color: white; padding: 15px 40px; 
-            font-size: 2vw; font-family: monospace; cursor: pointer; z-index: 20;
-        }
-        #play-button:hover { background: red; color: black; }
+        #bar { width: 0%; height: 100%; background: red; transition: width 0.2s; }
+        #play-button { display: none; position: absolute; left: 50%; bottom: 15vh; transform: translateX(-50%); background: #111; border: 2px solid red; color: white; padding: 15px 40px; font-size: 2vw; font-family: monospace; cursor: pointer; z-index: 20; }
     </style>
 </head>
-
 <body>
     <canvas id="MMFCanvas" width="1024" height="768"></canvas>
-    
     <div class="selection" id="selection">
         <img id="title" src="title.png">
         <img id="animatronic" src="animatronic.png">
-        
         <div class="loader" id="loader-ui">
             <h1 id="percentage">0%</h1>
             <div id="bar-box"><div id="bar"></div></div>
             <h2 id="stage">WAKING UP...</h2>
         </div>
-
         <button id="play-button">START NIGHTMARE</button>
-
-        <a href="https://discord.gg/xuu8TnSY4b">
-            <div class="launcher-text"><img src="launcher-text.png" style="width: 45vw;"></div>
-        </a>
+        <div class="launcher-text"><img src="launcher-text.png" style="width: 45vw;"></div>
     </div>
-
     <div class="glitch"></div>
     <img src="vignette.png" class="vignette">
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-
     <script>
-        const totalParts = 20; 
         const blobMap = new Map();
         const urlMap = new Map();
 
-        function updateProgress(text, percent) {
-            document.getElementById('percentage').innerText = percent + '%';
-            document.getElementById('bar').style.width = percent + '%';
-            document.getElementById('stage').innerText = text;
-        }
-
-        async function init() {
-            try {
-                let chunks = [];
-                for (let i = 1; i <= totalParts; i++) {
-                    updateProgress(`FETCHING PART ${i}`, Math.floor((i / totalParts) * 40));
-                    const res = await fetch(`resources.zip.part${i}`);
-                    if (!res.ok) throw new Error("Missing File: resources.zip.part" + i);
-                    chunks.push(await res.arrayBuffer());
+        // --- THE FIX: FORCING THE ENGINE TO SEE OUR UNZIPPED FILES ---
+        const OriginalImage = window.Image;
+        window.Image = function() {
+            const img = new OriginalImage();
+            const setter = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src').set;
+            Object.defineProperty(img, 'src', {
+                set: function(val) {
+                    const filename = val.toString().split('/').pop();
+                    if (urlMap.has(filename)) {
+                        setter.call(this, urlMap.get(filename));
+                    } else {
+                        setter.call(this, val);
+                    }
                 }
+            });
+            return img;
+        };
 
-                updateProgress("DECOMPRESSING...", 50);
-                const zip = await JSZip.loadAsync(new Blob(chunks));
-                const files = Object.keys(zip.files).filter(name => !zip.files[name].dir);
-
-                for (let i = 0; i < files.length; i++) {
-                    const file = zip.files[files[i]];
-                    const fileName = files[i].split('/').pop();
-                    const data = await file.async("uint8array");
-                    
-                    const blob = new Blob([data], { type: "application/octet-stream" });
-                    blobMap.set(fileName, blob);
-                    urlMap.set(fileName, URL.createObjectURL(blob));
-                    updateProgress("MAPPING...", 50 + Math.floor((i / files.length) * 45));
-                }
-
-                document.getElementById('loader-ui').style.display = 'none';
-                document.getElementById('play-button').style.display = 'block';
-            } catch (err) {
-                document.getElementById('stage').innerHTML = `<span style="color:red">LOAD FAILED: ${err.message}</span>`;
-            }
-        }
-
-        // Interceptors for Clickteam Engine
+        // Hook Fetch & XHR
         const ogFetch = window.fetch;
         window.fetch = async (input, init) => {
             const url = typeof input === 'string' ? input : input.url;
             const name = url.split('/').pop();
-            if (blobMap.has(name)) {
-                const response = new Response(blobMap.get(name));
-                Object.defineProperty(response, 'url', { value: url });
-                return response;
-            }
+            if (blobMap.has(name)) return new Response(blobMap.get(name));
             return ogFetch(input, init);
         };
 
         const ogOpen = XMLHttpRequest.prototype.open;
-        XMLHttpRequest.prototype.open = function(method, url) {
+        XMLHttpRequest.prototype.open = function(m, url) {
             const name = url.toString().split('/').pop();
             if (urlMap.has(name)) url = urlMap.get(name);
             return ogOpen.apply(this, arguments);
         };
 
-        document.getElementById('play-button').onclick = () => {
-            // Unsuspend Audio
-            const AC = window.AudioContext || window.webkitAudioContext;
-            if (AC) { const ctx = new AC(); ctx.resume(); }
+        async function init() {
+            try {
+                let chunks = [];
+                for (let i = 1; i <= 20; i++) {
+                    document.getElementById('percentage').innerText = Math.floor((i/20)*40) + '%';
+                    document.getElementById('bar').style.width = Math.floor((i/20)*40) + '%';
+                    const res = await ogFetch(`resources.zip.part${i}`);
+                    if (!res.ok) throw new Error("Missing part" + i);
+                    chunks.push(await res.arrayBuffer());
+                }
 
+                const zip = await JSZip.loadAsync(new Blob(chunks));
+                const files = Object.keys(zip.files);
+                for (let i = 0; i < files.length; i++) {
+                    const file = zip.files[files[i]];
+                    if (file.dir) continue;
+                    const name = files[i].split('/').pop();
+                    const data = await file.async("uint8array");
+                    const blob = new Blob([data], { type: name.endsWith('.png') ? 'image/png' : 'application/octet-stream' });
+                    blobMap.set(name, blob);
+                    urlMap.set(name, URL.createObjectURL(blob));
+                    document.getElementById('percentage').innerText = (40 + Math.floor((i/files.length)*60)) + '%';
+                    document.getElementById('bar').style.width = (40 + Math.floor((i/files.length)*60)) + '%';
+                }
+
+                document.getElementById('loader-ui').style.display = 'none';
+                document.getElementById('play-button').style.display = 'block';
+            } catch (e) {
+                document.getElementById('stage').innerText = "ERROR: " + e.message;
+            }
+        }
+
+        document.getElementById('play-button').onclick = () => {
+            const AC = window.AudioContext || window.webkitAudioContext;
+            if (AC) new AC().resume();
             document.getElementById('selection').style.display = 'none';
             document.getElementById('MMFCanvas').style.display = 'block';
 
-            const cchName = Array.from(urlMap.keys()).find(k => k.toLowerCase().endsWith('.cch'));
-            
             const script = document.createElement('script');
             script.src = "Runtime.js";
             script.onload = () => {
-                setTimeout(() => {
-                    if (typeof Runtime !== 'undefined') {
-                        new Runtime("MMFCanvas", cchName);
-                    }
-                }, 200);
+                const cch = Array.from(urlMap.keys()).find(k => k.toLowerCase().endsWith('.cch'));
+                new Runtime("MMFCanvas", cch);
             };
             document.head.appendChild(script);
         };
