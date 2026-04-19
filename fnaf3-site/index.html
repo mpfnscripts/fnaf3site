@@ -3,99 +3,109 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FNAF 3</title>
+    <title>Five Nights at Freddy's 3</title>
+    <link rel="icon" href="favicon.ico" />
     <style>
-        body { background: #000; color: #fff; margin: 0; display: flex; align-items: center; justify-content: center; height: 100vh; font-family: monospace; }
-        canvas { display: none; }
-        .loader { text-align: center; }
-        #bar-bg { width: 300px; height: 10px; border: 1px solid #fff; margin: 10px auto; }
-        #bar-fill { width: 0%; height: 100%; background: #fff; transition: width 0.1s; }
+        html { display: block; -webkit-user-select: none; user-select: none; overflow: hidden; height: 100%; }
+        body { position: relative; background-color: black; display: flex; align-items: center; justify-content: center; margin: 0; height: 100%; color: white; font-family: monospace; }
+        canvas { display: none; user-select: none; }
+        .loader { position: absolute; display: flex; flex-direction: column; align-items: center; z-index: 1; text-align: center; width: 85vw; }
+        .loader h1 { margin: 0; font-size: 5vw; }
+        #bar { margin: 10px 0; border: white solid 1px; width: 0%; transition: width 0.2s; }
+        #stage { font-size: 1.4vw; color: #aaa; }
     </style>
 </head>
 <body>
     <canvas id="MMFCanvas" width="1024" height="768"></canvas>
-    <div class="loader" id="ui">
-        <h1 id="pct">0%</h1>
-        <div id="bar-bg"><div id="bar-fill"></div></div>
-        <p id="msg">INITIALIZING...</p>
+    <div class="loader" id="loader-ui">
+        <h1 id="percentage">0%</h1>
+        <hr id="bar">
+        <h2 id="stage">INITIALIZING...</h2>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
     <script>
+        const totalParts = 20;
         const map = new Map();
 
-        async function run() {
+        function updateProgress(text, percent) {
+            document.getElementById('percentage').innerText = percent + '%';
+            document.getElementById('bar').style.width = percent + '%';
+            document.getElementById('stage').innerText = text.toUpperCase();
+        }
+
+        async function start() {
             try {
                 let chunks = [];
-                // 1. Fetch parts
-                for (let i = 1; i <= 20; i++) {
-                    const res = await fetch(`resources.zip.part${i}`);
-                    if (!res.ok) throw new Error("Missing part " + i);
-                    chunks.push(await res.arrayBuffer());
-                    let p = Math.floor((i / 20) * 50);
-                    document.getElementById('pct').innerText = p + "%";
-                    document.getElementById('bar-fill').style.width = p + "%";
+
+                // 1. DOWNLOAD ALL PARTS
+                for (let i = 1; i <= totalParts; i++) {
+                    updateProgress(`FETCHING DATA (PART ${i})...`, Math.floor((i / totalParts) * 50));
+                    const response = await fetch(`resources.zip.part${i}`);
+                    if (!response.ok) throw new Error(`Missing resources.zip.part${i}`);
+                    const buffer = await response.arrayBuffer();
+                    chunks.push(buffer);
                 }
 
-                // 2. Unzip
-                document.getElementById('msg').innerText = "EXTRACTING ARCHIVE...";
+                // 2. MERGE AND UNZIP
+                updateProgress("STITCHING ARCHIVE...", 55);
                 const zip = await JSZip.loadAsync(new Blob(chunks));
+                const files = Object.keys(zip.files);
                 
-                for (let name in zip.files) {
-                    const file = zip.files[name];
+                for (let i = 0; i < files.length; i++) {
+                    const file = zip.files[files[i]];
                     if (!file.dir) {
-                        const blob = await file.async("blob");
-                        map.set(name.split('/').pop(), URL.createObjectURL(blob));
+                        const content = await file.async("blob");
+                        const blobURL = URL.createObjectURL(content);
+                        const fileName = files[i].split('/').pop(); 
+                        map.set(fileName, blobURL); // Store by filename only
                     }
+                    updateProgress("UNPACKING ASSETS...", 60 + Math.floor((i / files.length) * 35));
                 }
 
-                // 3. PATCH XMLHttpRequest (For Runtime.js)
+                // 3. PATCH XMLHttpRequest (For missing textures)
                 const originalOpen = XMLHttpRequest.prototype.open;
                 XMLHttpRequest.prototype.open = function(method, url) {
-                    const fileName = url.toString().split('/').pop();
-                    if (map.has(fileName)) {
-                        // Redirect the request to our local blob URL
-                        url = map.get(fileName);
+                    const name = url.toString().split('/').pop();
+                    if (map.has(name)) {
+                        url = map.get(name);
                     }
                     return originalOpen.apply(this, [method, url]);
                 };
 
-                // 4. PATCH fetch (For modern parts)
-                const originalFetch = window.fetch;
+                // 4. PATCH fetch (For modern loading)
+                const ogFetch = window.fetch;
                 window.fetch = async (url) => {
-                    const fileName = url.toString().split('/').pop();
-                    if (map.has(fileName)) {
-                        return originalFetch(map.get(fileName));
+                    const name = url.toString().split('/').pop();
+                    if (map.has(name)) {
+                        return ogFetch(map.get(name));
                     }
-                    return originalFetch(url);
+                    return ogFetch(url);
                 };
 
-                // 5. Start engine
-                const s = document.createElement('script');
-                s.src = 'Runtime.js';
-                s.onload = () => {
-                    document.getElementById('ui').style.display = 'none';
+                // 5. START RUNTIME
+                const script = document.createElement('script');
+                script.src = 'Runtime.js';
+                script.onload = () => {
+                    document.getElementById('loader-ui').style.display = 'none';
                     document.getElementById('MMFCanvas').style.display = 'block';
                     
-                    window.resourcesPath = ""; 
-                    const brain = Array.from(map.keys()).find(k => k.endsWith('.cch'));
-                    
-                    if (!brain) {
-                        document.getElementById('msg').innerText = "FATAL: DATA FILE NOT FOUND IN ZIP";
-                        return;
-                    }
+                    window.resourcesPath = "resources/"; 
 
+                    // If the .cch file is in the ZIP, we use that. 
+                    // Otherwise, we look for the physical file you might have added.
+                    const brain = map.get("fnaf 3.cch") || "resources/fnaf 3.cch";
                     new Runtime("MMFCanvas", brain);
                 };
-                document.head.appendChild(s);
+                document.head.appendChild(script);
 
-            } catch (e) {
-                document.getElementById('msg').innerText = "ERROR: " + e.message;
-                console.error(e);
+            } catch (err) {
+                document.getElementById('stage').innerHTML = `<span style="color:red">ERROR: ${err.message}</span>`;
             }
         }
-        window.onload = run;
+
+        window.onload = start;
     </script>
 </body>
 </html>
