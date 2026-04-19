@@ -11,7 +11,8 @@
         canvas { display: none; user-select: none; }
         .loader { position: absolute; display: flex; flex-direction: column; align-items: center; z-index: 1; text-align: center; width: 85vw; }
         .loader h1 { margin: 0; font-size: 5vw; }
-        #bar { margin: 10px 0; border: white solid 1px; width: 0%; transition: width 0.2s; }
+        #bar { margin: 10px 0; border: white solid 1px; width: 0%; transition: width 0.2s; background-color: #333; }
+        #progress-fill { height: 100%; width: 0%; background-color: white; transition: width 0.2s; }
         #stage { font-size: 1.4vw; color: #aaa; }
     </style>
 </head>
@@ -19,7 +20,7 @@
     <canvas id="MMFCanvas" width="1024" height="768"></canvas>
     <div class="loader" id="loader-ui">
         <h1 id="percentage">0%</h1>
-        <hr id="bar">
+        <div id="bar" style="height: 10px;"><div id="progress-fill"></div></div>
         <h2 id="stage">INITIALIZING...</h2>
     </div>
 
@@ -31,7 +32,7 @@
 
         function updateProgress(text, percent) {
             document.getElementById('percentage').innerText = percent + '%';
-            document.getElementById('bar').style.width = percent + '%';
+            document.getElementById('progress-fill').style.width = percent + '%';
             document.getElementById('stage').innerText = text.toUpperCase();
         }
 
@@ -39,36 +40,41 @@
             try {
                 let chunks = [];
 
-                // 1. DOWNLOAD ALL PARTS
+                // 1. Fetch the 20 parts
                 for (let i = 1; i <= totalParts; i++) {
                     updateProgress(`FETCHING DATA (PART ${i})...`, Math.floor((i / totalParts) * 50));
                     const response = await fetch(`resources.zip.part${i}`);
                     if (!response.ok) throw new Error(`Missing resources.zip.part${i}`);
-                    const buffer = await response.arrayBuffer();
-                    chunks.push(buffer);
+                    chunks.push(await response.arrayBuffer());
                 }
 
-                // 2. MERGE PARTS
-                updateProgress("STITCHING ARCHIVE...", 55);
+                // 2. Combine and Unzip
+                updateProgress("OPENING SUITCASE...", 60);
                 const blob = new Blob(chunks);
-                const fullBuffer = await blob.arrayBuffer();
-
-                // 3. EXTRACT FILES
-                updateProgress("UNPACKING ASSETS...", 70);
-                const zip = await JSZip.loadAsync(fullBuffer);
-                const files = Object.keys(zip.files);
+                const zip = await JSZip.loadAsync(await blob.arrayBuffer());
                 
+                // 3. Map out the files hidden inside the zip
+                const files = Object.keys(zip.files);
+                let gameBrainBlobURL = null;
+
                 for (let i = 0; i < files.length; i++) {
                     const file = zip.files[files[i]];
                     if (!file.dir) {
                         const content = await file.async("blob");
-                        const fileName = files[i].split('/').pop(); // Clean path names
-                        map.set(fileName, URL.createObjectURL(content));
+                        const url = URL.createObjectURL(content);
+                        const fileName = files[i].split('/').pop();
+                        
+                        // If we find the "brain" file inside the zip, save it
+                        if (fileName.toLowerCase().endsWith(".cch")) {
+                            gameBrainBlobURL = url;
+                        }
+                        
+                        map.set(fileName, url);
                     }
-                    updateProgress("BOOTING ARCHIVE...", 70 + Math.floor((i / files.length) * 30));
+                    updateProgress("PREPARING ASSETS...", 60 + Math.floor((i / files.length) * 35));
                 }
 
-                // 4. INTERCEPT LOADING
+                // 4. Intercept network requests
                 const ogFetch = window.fetch;
                 window.fetch = async (url) => {
                     const name = url.toString().split('/').pop();
@@ -76,26 +82,22 @@
                     return ogFetch(url);
                 };
 
-                // 5. START RUNTIME
+                // 5. Fire up the game
+                updateProgress("STARTING...", 100);
                 const script = document.createElement('script');
                 script.src = 'Runtime.js';
                 script.onload = () => {
                     document.getElementById('loader-ui').style.display = 'none';
                     document.getElementById('MMFCanvas').style.display = 'block';
-                    
                     window.resourcesPath = ""; 
                     
-                    // MAGIC FIX: Grabs the game "brain" from the map instead of a physical file
-                    const gameBrain = map.get("fnaf 3.cch") || map.get("fnaf3.cch");
-                    
-                    if (!gameBrain) {
-                        throw new Error("Game data (fnaf 3.cch) not found inside the ZIP parts!");
+                    if (!gameBrainBlobURL) {
+                        // If it's STILL black, the .cch file is missing from the ZIP too
+                        alert("Error: Game data not found inside ZIP parts.");
+                        return;
                     }
 
-                    new Runtime("MMFCanvas", gameBrain); 
-                };
-                script.onerror = () => {
-                    document.getElementById('stage').innerHTML = "ERROR: COULD NOT LOAD RUNTIME.JS";
+                    new Runtime("MMFCanvas", gameBrainBlobURL); 
                 };
                 document.head.appendChild(script);
 
