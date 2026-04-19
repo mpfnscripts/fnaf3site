@@ -8,7 +8,7 @@
     <style>
         html { display: block; background: #000; -webkit-user-select: none; user-select: none; overflow: hidden; height: 100%; }
         body { position: relative; background-color: black; display: flex; align-items: center; justify-content: center; margin: 0; height: 100%; color: white; font-family: monospace; }
-        canvas { display: none; image-rendering: pixelated; }
+        canvas { display: none; image-rendering: pixelated; outline: none; }
         .loader { position: absolute; display: flex; flex-direction: column; align-items: center; z-index: 5; text-align: center; width: 85vw; }
         #bar-container { width: 100%; border: 1px solid #333; height: 4px; margin: 10px 0; }
         #bar { background: white; width: 0%; height: 100%; transition: width 0.1s; }
@@ -48,13 +48,13 @@
             try {
                 let chunks = [];
                 for (let i = 1; i <= totalParts; i++) {
-                    updateProgress(`LOADING PART ${i}`, Math.floor((i / totalParts) * 40));
+                    updateProgress(`FETCHING RESOURCE PART ${i}`, Math.floor((i / totalParts) * 40));
                     const res = await fetch(`resources.zip.part${i}`);
-                    if (!res.ok) throw new Error("Part fail");
+                    if (!res.ok) throw new Error(`Missing part ${i}`);
                     chunks.push(await res.arrayBuffer());
                 }
 
-                updateProgress("EXTRACTING", 50);
+                updateProgress("DECOMPRESSING DATA", 50);
                 const zip = await JSZip.loadAsync(new Blob(chunks));
                 const files = Object.keys(zip.files);
                 
@@ -65,21 +65,39 @@
                         const data = await file.async("uint8array");
                         const type = name.endsWith('.png') ? 'image/png' : 'application/octet-stream';
                         const blob = new Blob([data], { type: type });
+                        
                         window.blobMap.set(name, blob);
                         window.urlMap.set(name, URL.createObjectURL(blob));
                     }
-                    updateProgress("MAPPING", 50 + Math.floor((i / files.length) * 45));
+                    updateProgress("MAPPING ASSETS", 50 + Math.floor((i / files.length) * 45));
                 }
 
                 document.getElementById('loader-ui').style.display = 'none';
                 document.getElementById('play-zone').style.display = 'block';
 
             } catch (err) {
+                console.error(err);
                 document.getElementById('stage').innerText = "FATAL ERROR: " + err.message;
             }
         }
 
-        // --- THE INTERCEPTORS (THE CRITICAL FIX) ---
+        // --- THE ENGINE INTERCEPTORS ---
+        
+        // 1. Hook XMLHttpRequest (This is what your Runtime.js uses)
+        const originalOpen = XMLHttpRequest.prototype.open;
+        XMLHttpRequest.prototype.open = function(method, url) {
+            const urlStr = url.toString();
+            // Decode spaces and extract filename
+            const name = decodeURIComponent(urlStr.split('/').pop());
+            
+            if (window.urlMap.has(name)) {
+                console.log("Redirecting Runtime request:", name);
+                url = window.urlMap.get(name);
+            }
+            return originalOpen.apply(this, [method, url]);
+        };
+
+        // 2. Hook Fetch (Backup for modern runtimes)
         const ogFetch = window.fetch;
         window.fetch = async (input, init) => {
             const url = typeof input === 'string' ? input : input.url;
@@ -90,16 +108,7 @@
             return ogFetch(input, init);
         };
 
-        const originalOpen = XMLHttpRequest.prototype.open;
-        XMLHttpRequest.prototype.open = function(method, url) {
-            // Decode %20 (spaces) so it matches "fnaf 4.cch"
-            const name = decodeURIComponent(url.toString().split('/').pop());
-            if (window.urlMap.has(name)) {
-                url = window.urlMap.get(name);
-            }
-            return originalOpen.apply(this, [method, url]);
-        };
-
+        // 3. Hook Images (For the preloader and textures)
         const OriginalImage = window.Image;
         window.Image = function() {
             const img = new OriginalImage();
@@ -107,8 +116,11 @@
             Object.defineProperty(img, 'src', {
                 set: function(url) {
                     const name = decodeURIComponent(url.toString().split('/').pop());
-                    if (window.urlMap.has(name)) setter.call(this, window.urlMap.get(name));
-                    else setter.call(this, url);
+                    if (window.urlMap.has(name)) {
+                        setter.call(this, window.urlMap.get(name));
+                    } else {
+                        setter.call(this, url);
+                    }
                 }
             });
             return img;
@@ -118,7 +130,7 @@
             const AC = window.AudioContext || window.webkitAudioContext;
             if (AC) {
                 const ctx = new AC();
-                ctx.resume();
+                if (ctx.state === 'suspended') ctx.resume();
             }
         }
 
@@ -131,18 +143,20 @@
             const script = document.createElement('script');
             script.src = 'Runtime.js';
             script.onload = () => {
+                // Ensure resources path is empty so it looks in the "root" where our interceptor is watching
                 window.resourcesPath = "";
-                const cch = Array.from(window.urlMap.keys()).find(f => f.toLowerCase().endsWith('.cch'));
                 
-                // Use the plain string name so the XHR Interceptor can handle the redirect properly
-                // This avoids the ERR_FILE_NOT_FOUND blob error.
-                if (cch) {
-                    console.log("Starting engine with: " + cch);
-                    new Runtime("MMFCanvas", cch);
+                const cchFileName = Array.from(window.urlMap.keys()).find(f => f.toLowerCase().endsWith('.cch'));
+                
+                if (cchFileName) {
+                    console.log("Found CCH:", cchFileName);
+                    // Pass the STRING name. The XHR Interceptor will swap it for the Blob.
+                    new Runtime("MMFCanvas", cchFileName);
                 } else {
-                    new Runtime("MMFCanvas", "fnaf4.cch");
+                    alert("No game data (.cch) found in the provided files.");
                 }
                 
+                // Secondary audio kick for browsers that block the first one
                 setTimeout(forceUnlockAudio, 1000);
             };
             document.head.appendChild(script);
