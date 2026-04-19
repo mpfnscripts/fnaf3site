@@ -84,13 +84,12 @@
                     document.getElementById('loader-ui').style.display = 'none';
                     document.getElementById('MMFCanvas').style.display = 'block';
                     
-                    // Force the canvas to be visible
-                    const cvs = document.getElementById('MMFCanvas');
-                    cvs.style.display = "block";
-                    cvs.style.backgroundColor = "black";
-
-                    // The second part here must match your file name exactly
-                    new Runtime("MMFCanvas", "resources/fnaf 3.cch"); 
+                    // FIXED: Tell the game to look in the current folder, not a "resources" folder
+                    window.resourcesPath = ""; 
+                    
+                    // FIXED: Removed "resources/" from the filename
+                    // Make sure your file is named exactly "fnaf 3.cch" on GitHub!
+                    new Runtime("MMFCanvas", "fnaf 3.cch"); 
                 };
                 script.onerror = () => {
                     document.getElementById('stage').innerHTML = "ERROR: COULD NOT LOAD RUNTIME.JS";
