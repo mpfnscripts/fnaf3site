@@ -144,7 +144,6 @@
     <img src="resources/vignette.png" class="vignette">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </body>
-<!--Made by irv77-->
 <script>
     const parts = 20;
     let gametitle, runtimecanvas
@@ -262,7 +261,7 @@
             await intercept();
 
             const script = document.createElement('script');
-            script.src = 'src/Runtime.js';
+            script.src = 'Runtime.js'; // FIXED: Removed src/
             script.onload = () => {
                 new Runtime("MMFCanvas", runtimecanvas);
             };
@@ -320,7 +319,7 @@
             return parts;
         }
         Promise.all([
-            mergeFiles(getParts("src/resources.zip", 1, parts))
+            mergeFiles(getParts("resources.zip", 1, parts)) // FIXED: Removed src/
         ]).then(([resources]) => {
             window.fetch = async function (url, ...args) {
                 if (url.endsWith("resources.zip")) {
