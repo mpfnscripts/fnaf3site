@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Five Nights at Freddy's 3</title>
+    <link rel="icon" href="data:image/x-icon;base64,AAABAAEAAQEAAAEAIAAwAAAAFgAAACgAAAABAAAAAgAAAAEAIAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//AAAAAA==" />
     <style>
         html { display: block; background: #000; -webkit-user-select: none; user-select: none; overflow: hidden; height: 100%; }
         body { position: relative; background-color: black; display: flex; align-items: center; justify-content: center; margin: 0; height: 100%; color: white; font-family: monospace; }
@@ -33,8 +34,8 @@
 
     <script>
         const totalParts = 20;
-        const assetMap = new Map();
-        const blobMap = new Map(); // Store raw blobs for XHR/Fetch
+        const blobMap = new Map();
+        const urlMap = new Map();
 
         function updateProgress(text, percent) {
             document.getElementById('percentage').innerText = percent + '%';
@@ -61,10 +62,9 @@
                     if (!file.dir) {
                         const name = files[i].split('/').pop();
                         const data = await file.async("uint8array");
-                        const blob = new Blob([data], { type: 'application/octet-stream' });
-                        
+                        const blob = new Blob([data], { type: name.endsWith('.png') ? 'image/png' : 'application/octet-stream' });
                         blobMap.set(name, blob);
-                        assetMap.set(name, URL.createObjectURL(blob));
+                        urlMap.set(name, URL.createObjectURL(blob));
                     }
                     updateProgress("MAPPING", 50 + Math.floor((i / files.length) * 45));
                 }
@@ -77,23 +77,25 @@
             }
         }
 
-        // --- THE "FIX EVERYTHING" INTERCEPTOR ---
+        // --- INTERCEPTORS ---
         const ogFetch = window.fetch;
-        window.fetch = async (...args) => {
-            const url = args[0].toString();
+        window.fetch = async (input, init) => {
+            const url = typeof input === 'string' ? input : input.url;
             const name = url.split('/').pop();
             if (blobMap.has(name)) {
-                return new Response(blobMap.get(name));
+                const response = new Response(blobMap.get(name));
+                // Spoof the URL so the engine thinks it's a real file
+                Object.defineProperty(response, 'url', { value: url });
+                return response;
             }
-            return ogFetch(...args);
+            return ogFetch(input, init);
         };
 
         const originalOpen = XMLHttpRequest.prototype.open;
         XMLHttpRequest.prototype.open = function(method, url) {
-            const name = url.toString().split('/').pop();
-            if (assetMap.has(name)) {
-                url = assetMap.get(name);
-            }
+            this._url = url.toString();
+            const name = this._url.split('/').pop();
+            if (urlMap.has(name)) url = urlMap.get(name);
             return originalOpen.apply(this, [method, url]);
         };
 
@@ -104,30 +106,48 @@
             Object.defineProperty(img, 'src', {
                 set: function(url) {
                     const name = url.toString().split('/').pop();
-                    if (assetMap.has(name)) setter.call(this, assetMap.get(name));
+                    if (urlMap.has(name)) setter.call(this, urlMap.get(name));
                     else setter.call(this, url);
                 }
             });
             return img;
         };
 
+        // --- AUDIO ENGINE RESCUE ---
+        function forceUnlockAudio() {
+            const contexts = [];
+            // Catch the common global context
+            if (window.AudioContext || window.webkitAudioContext) {
+                contexts.push(new (window.AudioContext || window.webkitAudioContext)());
+            }
+            // Search window for any Clickteam-created contexts
+            for (let key in window) {
+                if (window[key] instanceof (window.AudioContext || window.webkitAudioContext)) {
+                    contexts.push(window[key]);
+                }
+            }
+            // Resume every single one found
+            contexts.forEach(ctx => {
+                if (ctx.state === 'suspended') ctx.resume();
+            });
+        }
+
         document.getElementById('play-button').onclick = function() {
             document.getElementById('play-zone').style.display = 'none';
             document.getElementById('MMFCanvas').style.display = 'block';
 
-            // Wake up Audio
-            const AC = window.AudioContext || window.webkitAudioContext;
-            if (AC) {
-                window.activeAudioContext = new AC();
-                window.activeAudioContext.resume();
-            }
+            forceUnlockAudio();
 
             const script = document.createElement('script');
             script.src = 'Runtime.js';
             script.onload = () => {
                 window.resourcesPath = "";
-                const cch = Array.from(assetMap.keys()).find(f => f.toLowerCase().endsWith('.cch')) || "fnaf3.cch";
-                new Runtime("MMFCanvas", cch);
+                const cch = Array.from(urlMap.keys()).find(f => f.toLowerCase().endsWith('.cch'));
+                
+                // Final safeguard: Re-trigger unlock after a short delay
+                setTimeout(forceUnlockAudio, 1000);
+                
+                new Runtime("MMFCanvas", cch || "fnaf3.cch");
             };
             document.head.appendChild(script);
         };
