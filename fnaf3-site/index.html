@@ -34,21 +34,12 @@
     <script>
         const totalParts = 20;
         const assetMap = new Map();
+        const blobMap = new Map(); // Store raw blobs for XHR/Fetch
 
         function updateProgress(text, percent) {
             document.getElementById('percentage').innerText = percent + '%';
             document.getElementById('bar').style.width = percent + '%';
             document.getElementById('stage').innerText = text.toUpperCase();
-        }
-
-        // --- THE AUDIO FIX: MIME TYPE DETECTION ---
-        function getMimeType(name) {
-            if (name.endsWith('.mp3')) return 'audio/mpeg';
-            if (name.endsWith('.ogg')) return 'audio/ogg';
-            if (name.endsWith('.wav')) return 'audio/wav';
-            if (name.endsWith('.m4a')) return 'audio/mp4';
-            if (name.endsWith('.png')) return 'image/png';
-            return 'application/octet-stream';
         }
 
         async function start() {
@@ -70,13 +61,14 @@
                     if (!file.dir) {
                         const name = files[i].split('/').pop();
                         const data = await file.async("uint8array");
-                        const blob = new Blob([data], { type: getMimeType(name) });
+                        const blob = new Blob([data], { type: 'application/octet-stream' });
+                        
+                        blobMap.set(name, blob);
                         assetMap.set(name, URL.createObjectURL(blob));
                     }
                     updateProgress("MAPPING", 50 + Math.floor((i / files.length) * 45));
                 }
 
-                // Show button
                 document.getElementById('loader-ui').style.display = 'none';
                 document.getElementById('play-zone').style.display = 'block';
 
@@ -85,11 +77,23 @@
             }
         }
 
-        // --- GLOBAL INTERCEPTORS ---
+        // --- THE "FIX EVERYTHING" INTERCEPTOR ---
+        const ogFetch = window.fetch;
+        window.fetch = async (...args) => {
+            const url = args[0].toString();
+            const name = url.split('/').pop();
+            if (blobMap.has(name)) {
+                return new Response(blobMap.get(name));
+            }
+            return ogFetch(...args);
+        };
+
         const originalOpen = XMLHttpRequest.prototype.open;
         XMLHttpRequest.prototype.open = function(method, url) {
             const name = url.toString().split('/').pop();
-            if (assetMap.has(name)) url = assetMap.get(name);
+            if (assetMap.has(name)) {
+                url = assetMap.get(name);
+            }
             return originalOpen.apply(this, [method, url]);
         };
 
@@ -111,28 +115,19 @@
             document.getElementById('play-zone').style.display = 'none';
             document.getElementById('MMFCanvas').style.display = 'block';
 
-            // Resuming multiple possible contexts
-            const resume = () => {
-                const AC = window.AudioContext || window.webkitAudioContext;
-                if (AC) {
-                    const t = new AC();
-                    t.resume();
-                }
-                if (window.activeAudioContext) window.activeAudioContext.resume();
-            };
-            resume();
+            // Wake up Audio
+            const AC = window.AudioContext || window.webkitAudioContext;
+            if (AC) {
+                window.activeAudioContext = new AC();
+                window.activeAudioContext.resume();
+            }
 
             const script = document.createElement('script');
             script.src = 'Runtime.js';
             script.onload = () => {
                 window.resourcesPath = "";
-                // Force search for the CCH
                 const cch = Array.from(assetMap.keys()).find(f => f.toLowerCase().endsWith('.cch')) || "fnaf3.cch";
-                
-                // Final override: inject assetMap into the Runtime if it has a hook
-                if (window.Runtime) {
-                    new Runtime("MMFCanvas", cch);
-                }
+                new Runtime("MMFCanvas", cch);
             };
             document.head.appendChild(script);
         };
