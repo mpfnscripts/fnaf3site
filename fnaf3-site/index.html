@@ -30,13 +30,12 @@
         const totalParts = 20;
         const assetMap = new Map();
 
-        // 1. IMAGE INTERCEPTOR (Fixes 404s for M000x.png files)
+        // 1. IMAGE HOOK: Converts textures to Base64 so they can't be "Not Found"
         const OriginalImage = window.Image;
         window.Image = function() {
             const img = new OriginalImage();
             Object.defineProperty(img, 'src', {
                 set(url) {
-                    // Extract just the filename (e.g., "M0001.png")
                     const name = url.toString().split('/').pop();
                     if (assetMap.has(name)) {
                         this.setAttribute('src', assetMap.get(name));
@@ -58,17 +57,14 @@
         async function start() {
             try {
                 let chunks = [];
-
-                // Step A: Download the 20 split zip files
                 for (let i = 1; i <= totalParts; i++) {
-                    updateProgress(`Fetching Data Part ${i}...`, Math.floor((i / totalParts) * 40));
+                    updateProgress(`Downloading Part ${i}...`, Math.floor((i / totalParts) * 40));
                     const response = await fetch(`resources.zip.part${i}`);
-                    if (!response.ok) throw new Error(`Could not load resources.zip.part${i}`);
+                    if (!response.ok) throw new Error(`Part ${i} is missing.`);
                     chunks.push(await response.arrayBuffer());
                 }
 
-                // Step B: Stitch and Unzip
-                updateProgress("Stitching Archive...", 45);
+                updateProgress("Unpacking Assets...", 45);
                 const zip = await JSZip.loadAsync(new Blob(chunks));
                 const files = Object.keys(zip.files);
                 
@@ -77,39 +73,29 @@
                     if (!file.dir) {
                         const fileName = files[i].split('/').pop();
                         
-                        // Use Base64 for images (most stable for textures)
-                        if (/\.(png|jpg|jpeg|gif)$/i.test(fileName)) {
+                        if (/\.(png|jpg|jpeg)$/i.test(fileName)) {
                             const b64 = await file.async("base64");
                             assetMap.set(fileName, `data:image/png;base64,${b64}`);
                         } else {
-                            // Use Blobs for the .cch and sound files
+                            // PINNING: Store non-images as permanent Blob URLs
                             const content = await file.async("blob");
                             assetMap.set(fileName, URL.createObjectURL(content));
                         }
                     }
-                    updateProgress("Unpacking Assets...", 50 + Math.floor((i / files.length) * 45));
+                    updateProgress("Mapping Memory...", 50 + Math.floor((i / files.length) * 45));
                 }
 
-                // 2. XHR INTERCEPTOR (Fixes ERR_FILE_NOT_FOUND for .cch file)
+                // 2. XHR HOOK: Forces the engine to use our memory map
                 const originalOpen = XMLHttpRequest.prototype.open;
                 XMLHttpRequest.prototype.open = function(method, url) {
                     const name = url.toString().split('/').pop();
                     if (assetMap.has(name)) {
-                        // Swap the requested URL with our memory Blob URL
-                        arguments[1] = assetMap.get(name);
+                        url = assetMap.get(name);
                     }
-                    return originalOpen.apply(this, arguments);
+                    return originalOpen.apply(this, [method, url]);
                 };
 
-                // 3. FETCH INTERCEPTOR (Extra layer for modern loaders)
-                const ogFetch = window.fetch;
-                window.fetch = async (url, options) => {
-                    const name = url.toString().split('/').pop();
-                    if (assetMap.has(name)) return ogFetch(assetMap.get(name), options);
-                    return ogFetch(url, options);
-                };
-
-                // Step C: Launch the Engine
+                // 3. START ENGINE
                 updateProgress("Launching...", 100);
                 const script = document.createElement('script');
                 script.src = 'Runtime.js';
@@ -117,19 +103,12 @@
                     document.getElementById('loader-ui').style.display = 'none';
                     document.getElementById('MMFCanvas').style.display = 'block';
                     
-                    // Tell the engine to ignore the 'resources/' folder prefix
                     window.resourcesPath = ""; 
-
-                    // Automatically find the .cch file in our map
                     const cchKey = Array.from(assetMap.keys()).find(k => k.toLowerCase().endsWith('.cch'));
                     
-                    if (!cchKey) {
-                        alert("Error: Game data (.cch) not found in the uploaded ZIP parts.");
-                        return;
+                    if (cchKey) {
+                        new Runtime("MMFCanvas", assetMap.get(cchKey));
                     }
-
-                    // Start the game using the memory URL
-                    new Runtime("MMFCanvas", assetMap.get(cchKey));
                 };
                 document.head.appendChild(script);
 
