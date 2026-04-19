@@ -30,7 +30,7 @@
         const totalParts = 20;
         const map = new Map();
 
-        // FIX 1: Intercept 'new Image()' for the M000x.png textures
+        // PATCH 1: Intercept background Image loading for textures (M0001.png, etc.)
         const OriginalImage = window.Image;
         window.Image = function() {
             const img = new OriginalImage();
@@ -66,8 +66,8 @@
                     chunks.push(await response.arrayBuffer());
                 }
 
-                // 2. UNPACK AND CONVERT IMAGES TO BASE64 (Fixes ERR_FILE_NOT_FOUND)
-                updateProgress("EXTRACTING ASSETS...", 50);
+                // 2. MERGE AND UNPACK
+                updateProgress("STITCHING ARCHIVE...", 45);
                 const zip = await JSZip.loadAsync(new Blob(chunks));
                 const files = Object.keys(zip.files);
                 
@@ -76,20 +76,19 @@
                     if (!file.dir) {
                         const fileName = files[i].split('/').pop();
                         
+                        // Convert textures to Base64 to prevent ERR_FILE_NOT_FOUND
                         if (/\.(png|jpg|jpeg)$/i.test(fileName)) {
-                            // Convert images to Base64 so they stay in memory permanently
                             const base64 = await file.async("base64");
                             map.set(fileName, `data:image/png;base64,${base64}`);
                         } else {
-                            // Use Blob URLs for the .cch file
                             const content = await file.async("blob");
                             map.set(fileName, URL.createObjectURL(content));
                         }
                     }
-                    updateProgress("PREPARING TEXTURES...", 50 + Math.floor((i / files.length) * 45));
+                    updateProgress("PREPARING ASSETS...", 50 + Math.floor((i / files.length) * 45));
                 }
 
-                // FIX 2: Patch XMLHttpRequest (The engine uses this for the .cch file)
+                // PATCH 2: Intercept XMLHttpRequest (The engine uses this for the .cch file)
                 const originalOpen = XMLHttpRequest.prototype.open;
                 XMLHttpRequest.prototype.open = function(method, url) {
                     const name = url.toString().split('/').pop();
@@ -99,7 +98,7 @@
                     return originalOpen.apply(this, [method, url]);
                 };
 
-                // FIX 3: Patch Fetch (For everything else)
+                // PATCH 3: Global Fetch Interceptor
                 const ogFetch = window.fetch;
                 window.fetch = async (url) => {
                     const name = url.toString().split('/').pop();
@@ -107,7 +106,7 @@
                     return ogFetch(url);
                 };
 
-                // 3. START ENGINE
+                // 3. START RUNTIME
                 updateProgress("LAUNCHING...", 100);
                 const script = document.createElement('script');
                 script.src = 'Runtime.js';
@@ -116,14 +115,14 @@
                     document.getElementById('MMFCanvas').style.display = 'block';
                     
                     window.resourcesPath = ""; 
+                    // Auto-detect the .cch file regardless of path
                     const brain = Array.from(map.keys()).find(k => k.toLowerCase().endsWith('.cch'));
                     
-                    if (!brain) {
-                        alert("FATAL ERROR: Game data (.cch) not found in ZIP parts.");
-                        return;
+                    if (brain) {
+                        new Runtime("MMFCanvas", map.get(brain));
+                    } else {
+                        alert("Could not find .cch game file in the zip.");
                     }
-
-                    new Runtime("MMFCanvas", map.get(brain));
                 };
                 document.head.appendChild(script);
 
