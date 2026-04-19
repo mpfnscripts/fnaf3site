@@ -9,7 +9,7 @@
         canvas { display: none; }
         .loader { text-align: center; }
         #bar-bg { width: 300px; height: 10px; border: 1px solid #fff; margin: 10px auto; }
-        #bar-fill { width: 0%; height: 100%; background: #fff; transition: width 0.2s; }
+        #bar-fill { width: 0%; height: 100%; background: #fff; transition: width 0.1s; }
     </style>
 </head>
 <body>
@@ -17,7 +17,7 @@
     <div class="loader" id="ui">
         <h1 id="pct">0%</h1>
         <div id="bar-bg"><div id="bar-fill"></div></div>
-        <p id="msg">LOADING PARTS...</p>
+        <p id="msg">INITIALIZING...</p>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
@@ -28,7 +28,7 @@
         async function run() {
             try {
                 let chunks = [];
-                // 1. Get the parts
+                // 1. Fetch parts
                 for (let i = 1; i <= 20; i++) {
                     const res = await fetch(`resources.zip.part${i}`);
                     if (!res.ok) throw new Error("Missing part " + i);
@@ -38,8 +38,8 @@
                     document.getElementById('bar-fill').style.width = p + "%";
                 }
 
-                // 2. Unzip everything into memory
-                document.getElementById('msg').innerText = "EXTRACTING...";
+                // 2. Unzip
+                document.getElementById('msg').innerText = "EXTRACTING ARCHIVE...";
                 const zip = await JSZip.loadAsync(new Blob(chunks));
                 
                 for (let name in zip.files) {
@@ -50,28 +50,39 @@
                     }
                 }
 
-                // 3. The "Trick": Intercept the 404
+                // 3. PATCH XMLHttpRequest (For Runtime.js)
+                const originalOpen = XMLHttpRequest.prototype.open;
+                XMLHttpRequest.prototype.open = function(method, url) {
+                    const fileName = url.toString().split('/').pop();
+                    if (map.has(fileName)) {
+                        // Redirect the request to our local blob URL
+                        url = map.get(fileName);
+                    }
+                    return originalOpen.apply(this, [method, url]);
+                };
+
+                // 4. PATCH fetch (For modern parts)
                 const originalFetch = window.fetch;
                 window.fetch = async (url) => {
                     const fileName = url.toString().split('/').pop();
                     if (map.has(fileName)) {
-                        return new Response(await (await originalFetch(map.get(fileName))).blob());
+                        return originalFetch(map.get(fileName));
                     }
                     return originalFetch(url);
                 };
 
-                // 4. Start the engine
+                // 5. Start engine
                 const s = document.createElement('script');
                 s.src = 'Runtime.js';
                 s.onload = () => {
                     document.getElementById('ui').style.display = 'none';
                     document.getElementById('MMFCanvas').style.display = 'block';
                     
-                    // This finds whatever the "brain" file is named inside your zip
+                    window.resourcesPath = ""; 
                     const brain = Array.from(map.keys()).find(k => k.endsWith('.cch'));
                     
                     if (!brain) {
-                        document.getElementById('msg').innerText = "ERROR: NO DATA FILE IN ZIP";
+                        document.getElementById('msg').innerText = "FATAL: DATA FILE NOT FOUND IN ZIP";
                         return;
                     }
 
@@ -80,7 +91,8 @@
                 document.head.appendChild(s);
 
             } catch (e) {
-                document.getElementById('msg').innerText = "FATAL ERROR: " + e.message;
+                document.getElementById('msg').innerText = "ERROR: " + e.message;
+                console.error(e);
             }
         }
         window.onload = run;
