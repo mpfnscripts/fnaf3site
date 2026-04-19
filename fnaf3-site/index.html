@@ -11,34 +11,33 @@
         canvas { display: none; user-select: none; }
         .loader { position: absolute; display: flex; flex-direction: column; align-items: center; z-index: 1; text-align: center; width: 85vw; }
         .loader h1 { margin: 0; font-size: 5vw; }
-        #bar-container { margin: 10px 0; border: white solid 1px; width: 300px; height: 12px; background: #111; }
-        #bar-fill { background: white; width: 0%; height: 100%; transition: width 0.1s; }
-        #stage { font-size: 1.4vw; color: #aaa; text-transform: uppercase; }
+        #bar { margin: 10px 0; border: white solid 1px; width: 0%; transition: width 0.2s; }
+        #stage { font-size: 1.4vw; color: #aaa; }
     </style>
 </head>
 <body>
     <canvas id="MMFCanvas" width="1024" height="768"></canvas>
     <div class="loader" id="loader-ui">
         <h1 id="percentage">0%</h1>
-        <div id="bar-container"><div id="bar-fill"></div></div>
-        <h2 id="stage">Initializing...</h2>
+        <hr id="bar">
+        <h2 id="stage">INITIALIZING...</h2>
     </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
     <script>
         const totalParts = 20;
-        const assetMap = new Map();
+        const map = new Map();
 
-        // 1. IMAGE INTERCEPTOR: Use Base64 to prevent ERR_FILE_NOT_FOUND on textures
+        // --- PATCH 1: IMAGE INTERCEPTOR ---
         const OriginalImage = window.Image;
         window.Image = function() {
             const img = new OriginalImage();
             Object.defineProperty(img, 'src', {
                 set(url) {
                     const name = url.toString().split('/').pop();
-                    if (assetMap.has(name)) {
-                        this.setAttribute('src', assetMap.get(name));
+                    if (map.has(name)) {
+                        this.setAttribute('src', map.get(name));
                     } else {
                         this.setAttribute('src', url);
                     }
@@ -50,88 +49,79 @@
 
         function updateProgress(text, percent) {
             document.getElementById('percentage').innerText = percent + '%';
-            document.getElementById('bar-fill').style.width = percent + '%';
-            document.getElementById('stage').innerText = text;
+            document.getElementById('bar').style.width = percent + '%';
+            document.getElementById('stage').innerText = text.toUpperCase();
         }
 
         async function start() {
             try {
                 let chunks = [];
+
+                // 1. DOWNLOAD ALL PARTS
                 for (let i = 1; i <= totalParts; i++) {
-                    updateProgress(`Fetching Part ${i}...`, Math.floor((i / totalParts) * 40));
+                    updateProgress(`FETCHING DATA (PART ${i})...`, Math.floor((i / totalParts) * 50));
                     const response = await fetch(`resources.zip.part${i}`);
-                    if (!response.ok) throw new Error(`Missing part ${i}`);
-                    chunks.push(await response.arrayBuffer());
+                    if (!response.ok) throw new Error(`Missing resources.zip.part${i}`);
+                    const buffer = await response.arrayBuffer();
+                    chunks.push(buffer);
                 }
 
-                updateProgress("Unpacking Assets...", 45);
-                const zip = await JSZip.loadAsync(new Blob(chunks));
+                // 2. MERGE PARTS
+                updateProgress("STITCHING ARCHIVE...", 55);
+                const blob = new Blob(chunks);
+                const fullBuffer = await blob.arrayBuffer();
+
+                // 3. EXTRACT FILES
+                updateProgress("UNPACKING ASSETS...", 70);
+                const zip = await JSZip.loadAsync(fullBuffer);
                 const files = Object.keys(zip.files);
                 
                 for (let i = 0; i < files.length; i++) {
                     const file = zip.files[files[i]];
                     if (!file.dir) {
+                        const content = await file.async("blob");
                         const fileName = files[i].split('/').pop();
-                        
-                        if (/\.(png|jpg|jpeg)$/i.test(fileName)) {
-                            // Convert textures to Base64 (cannot expire)
-                            const b64 = await file.async("base64");
-                            assetMap.set(fileName, `data:image/png;base64,${b64}`);
-                        } else {
-                            // Store everything else as an ArrayBuffer for direct injection
-                            const buffer = await file.async("arraybuffer");
-                            assetMap.set(fileName, buffer);
-                        }
+                        map.set(fileName, URL.createObjectURL(content));
                     }
-                    updateProgress("Memory Mapping...", 50 + Math.floor((i / files.length) * 45));
+                    updateProgress("BOOTING ARCHIVE...", 70 + Math.floor((i / files.length) * 30));
                 }
 
-                // 2. AGGRESSIVE XHR PATCH: Injects data directly without using Blob URLs
+                // --- PATCH 2: XHR INTERCEPTOR (For .cch and audio) ---
                 const originalOpen = XMLHttpRequest.prototype.open;
-                const originalSend = XMLHttpRequest.prototype.send;
-
                 XMLHttpRequest.prototype.open = function(method, url) {
-                    this._url = url.toString().split('/').pop();
-                    return originalOpen.apply(this, arguments);
-                };
-
-                XMLHttpRequest.prototype.send = function() {
-                    if (assetMap.has(this._url)) {
-                        const data = assetMap.get(this._url);
-                        // If it's the game data, mock a successful response
-                        Object.defineProperty(this, 'status', { value: 200 });
-                        Object.defineProperty(this, 'readyState', { value: 4 });
-                        Object.defineProperty(this, 'response', { value: data });
-                        Object.defineProperty(this, 'responseText', { value: new TextDecoder().decode(data) });
-                        
-                        if (this.onload) this.onload();
-                        if (this.onreadystatechange) this.onreadystatechange();
-                        return; // Prevent real network request
+                    const name = url.toString().split('/').pop();
+                    if (map.has(name)) {
+                        url = map.get(name);
                     }
-                    return originalSend.apply(this, arguments);
+                    return originalOpen.apply(this, [method, url]);
                 };
 
-                // 3. LAUNCH ENGINE
-                updateProgress("Launching...", 100);
+                // 4. INTERCEPT FETCH
+                const ogFetch = window.fetch;
+                window.fetch = async (url) => {
+                    const name = url.toString().split('/').pop();
+                    if (map.has(name)) return ogFetch(map.get(name));
+                    return ogFetch(url);
+                };
+
+                // 5. START RUNTIME
                 const script = document.createElement('script');
                 script.src = 'Runtime.js';
                 script.onload = () => {
                     document.getElementById('loader-ui').style.display = 'none';
                     document.getElementById('MMFCanvas').style.display = 'block';
                     
+                    // Important: Set resourcesPath to empty so it looks for flat filenames
                     window.resourcesPath = ""; 
-                    const cchKey = Array.from(assetMap.keys()).find(k => k.toLowerCase().endsWith('.cch'));
                     
-                    if (cchKey) {
-                        // Start with the filename; the XHR patch will catch the request
-                        new Runtime("MMFCanvas", cchKey);
-                    }
+                    // Find the actual .cch file name in your zip
+                    const cchFile = Array.from(map.keys()).find(f => f.endsWith('.cch'));
+                    new Runtime("MMFCanvas", cchFile || "fnaf 3.cch");
                 };
                 document.head.appendChild(script);
 
             } catch (err) {
                 document.getElementById('stage').innerHTML = `<span style="color:red">ERROR: ${err.message}</span>`;
-                console.error(err);
             }
         }
 
