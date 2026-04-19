@@ -6,7 +6,7 @@
     <title>Five Nights at Freddy's 4</title>
     <link rel="icon" href="data:image/x-icon;base64,AAABAAEAAQEAAAEAIAAwAAAAFgAAACgAAAABAAAAAgAAAAEAIAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAP//AAAAAA==" />
     <style>
-        html { display: block; -webkit-user-select: none; user-select: none; overflow: hidden; height: 100%; }
+        html { display: block; -webkit-user-select: none; user-select: none; overflow: hidden; height: 100%; background: #000; }
         body { position: relative; background-color: black; background-image: url(resources/office.png); background-position: center; background-size: cover; display: flex; align-items: center; justify-content: center; margin: 0; height: 100%; overflow: hidden; }
         
         .selection { height: 100vh; width: 100%; display: flex; overflow: hidden; position: relative; z-index: 2; }
@@ -14,7 +14,8 @@
         .vignette { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 4; }
         .glitch { position: absolute; background-image: url(resources/background.gif); background-position: center; background-size: 50vw; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; opacity: 0.15; z-index: 1; }
         
-        canvas { display: none; user-select: none; position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 10; }
+        /* Canvas must be visible once game starts */
+        canvas { display: none; user-select: none; position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 10; background: #000; }
 
         #title { position: absolute; top: 10vh; left: 5vw; z-index: 3; height: 20vh; }
         #animatronic { position: absolute; top: -5vh; right: 7vw; height: 120vh; z-index: 2; }
@@ -39,15 +40,12 @@
     <div class="selection" id="selection">
         <img id="title" src="resources/title.png">
         <img id="animatronic" src="resources/animatronic.png">
-        
         <div class="loader" id="loader-ui">
             <h1 id="percentage">0%</h1>
             <div id="bar"></div>
             <h2 id="stage">INITIALIZING...</h2>
         </div>
-
         <button id="play-button">START NIGHTMARE</button>
-
         <a href="https://discord.gg/xuu8TnSY4b">
             <div class="launcher-text"><img src="resources/launcher-text.png" style="width: 45vw;"></div>
         </a>
@@ -74,13 +72,12 @@
                 let chunks = [];
                 for (let i = 1; i <= totalParts; i++) {
                     updateProgress(`FETCHING PART ${i}`, Math.floor((i / totalParts) * 40));
-                    // Check if file name matches resources.zip.part or resources.part
                     const res = await fetch(`resources.zip.part${i}`);
                     if (!res.ok) throw new Error("Could not find part " + i);
                     chunks.push(await res.arrayBuffer());
                 }
 
-                updateProgress("UNZIPPING NIGHTMARE...", 50);
+                updateProgress("DECOMPRESSING...", 50);
                 const zip = await JSZip.loadAsync(new Blob(chunks));
                 const files = Object.keys(zip.files).filter(name => !zip.files[name].dir);
 
@@ -89,29 +86,20 @@
                     const fileName = files[i].split('/').pop();
                     const data = await file.async("uint8array");
                     
-                    // Critical for audio: specific mime types
-                    let type = "application/octet-stream";
-                    if(fileName.endsWith(".png")) type = "image/png";
-                    if(fileName.endsWith(".mp3")) type = "audio/mpeg";
-                    if(fileName.endsWith(".wav")) type = "audio/wav";
-
-                    const blob = new Blob([data], { type: type });
+                    const blob = new Blob([data], { type: "application/octet-stream" });
                     blobMap.set(fileName, blob);
                     urlMap.set(fileName, URL.createObjectURL(blob));
-                    updateProgress("MAPPING ASSETS...", 50 + Math.floor((i / files.length) * 45));
+                    updateProgress("MAPPING...", 50 + Math.floor((i / files.length) * 45));
                 }
 
-                updateProgress("READY", 100);
                 document.getElementById('loader-ui').style.display = 'none';
                 document.getElementById('play-button').style.display = 'block';
-
             } catch (err) {
                 document.getElementById('stage').innerHTML = `<span style="color:red">ERROR: ${err.message}</span>`;
-                console.error(err);
             }
         }
 
-        // --- GLOBAL INTERCEPTORS ---
+        // --- ENGINE PATCHING ---
         const ogFetch = window.fetch;
         window.fetch = async (input, init) => {
             const url = typeof input === 'string' ? input : input.url;
@@ -131,26 +119,12 @@
             return ogOpen.apply(this, arguments);
         };
 
-        const OriginalImage = window.Image;
-        window.Image = function() {
-            const img = new OriginalImage();
-            const setter = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src').set;
-            Object.defineProperty(img, 'src', {
-                set: function(url) {
-                    const name = url.toString().split('/').pop();
-                    if (urlMap.has(name)) setter.call(this, urlMap.get(name));
-                    else setter.call(this, url);
-                }
-            });
-            return img;
-        };
-
         function unlockAudio() {
             const AC = window.AudioContext || window.webkitAudioContext;
-            if (!AC) return;
-            const ctx = new AC();
-            ctx.resume();
-            if (window.activeAudioContext) window.activeAudioContext.resume();
+            if (AC) {
+                const ctx = new AC();
+                ctx.resume();
+            }
         }
 
         document.getElementById('play-button').onclick = () => {
@@ -158,14 +132,20 @@
             document.getElementById('selection').style.display = 'none';
             document.getElementById('MMFCanvas').style.display = 'block';
 
+            // Find the CCH file automatically
+            const cchName = Array.from(urlMap.keys()).find(k => k.toLowerCase().endsWith('.cch'));
+            
             const script = document.createElement('script');
             script.src = "Runtime.js";
+            script.onerror = () => alert("Runtime.js not found in folder!");
             script.onload = () => {
-                window.resourcesPath = ""; 
-                // Find the first .cch file available in the zip
-                const actualCch = Array.from(urlMap.keys()).find(f => f.toLowerCase().endsWith('.cch')) || "fnaf 4.cch";
-                new Runtime("MMFCanvas", actualCch);
-                setTimeout(unlockAudio, 1500); 
+                setTimeout(() => {
+                    if (typeof Runtime !== 'undefined') {
+                        new Runtime("MMFCanvas", cchName);
+                    } else {
+                        console.error("Runtime not initialized properly.");
+                    }
+                }, 100);
             };
             document.head.appendChild(script);
         };
