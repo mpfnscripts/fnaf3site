@@ -76,12 +76,16 @@
                     return ogFetch(url);
                 };
 
-                // 5. START RUNTIME
+// 5. START RUNTIME
                 const script = document.createElement('script');
                 script.src = 'Runtime.js';
                 script.onload = () => {
                     document.getElementById('loader-ui').style.display = 'none';
                     document.getElementById('MMFCanvas').style.display = 'block';
+                    
+                    // This line tells the engine to look in your resources folder
+                    window.resourcesPath = "resources/"; 
+                    
                     new Runtime("MMFCanvas", "resources/fnaf 3.cch");
                 };
                 document.head.appendChild(script);
