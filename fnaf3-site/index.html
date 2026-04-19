@@ -38,7 +38,6 @@
         async function start() {
             try {
                 let chunks = [];
-                let loadedBytes = 0;
 
                 // 1. DOWNLOAD ALL PARTS
                 for (let i = 1; i <= totalParts; i++) {
@@ -63,7 +62,8 @@
                     const file = zip.files[files[i]];
                     if (!file.dir) {
                         const content = await file.async("blob");
-                        map.set(files[i], URL.createObjectURL(content));
+                        const fileName = files[i].split('/').pop(); // Clean path names
+                        map.set(fileName, URL.createObjectURL(content));
                     }
                     updateProgress("BOOTING ARCHIVE...", 70 + Math.floor((i / files.length) * 30));
                 }
@@ -76,20 +76,23 @@
                     return ogFetch(url);
                 };
 
-// 5. START RUNTIME
+                // 5. START RUNTIME
                 const script = document.createElement('script');
                 script.src = 'Runtime.js';
                 script.onload = () => {
-                    console.log("Runtime Loaded");
                     document.getElementById('loader-ui').style.display = 'none';
                     document.getElementById('MMFCanvas').style.display = 'block';
                     
-                    // FIXED: Tell the game to look in the current folder, not a "resources" folder
                     window.resourcesPath = ""; 
                     
-                    // FIXED: Removed "resources/" from the filename
-                    // Make sure your file is named exactly "fnaf 3.cch" on GitHub!
-                    new Runtime("MMFCanvas", "fnaf 3.cch"); 
+                    // MAGIC FIX: Grabs the game "brain" from the map instead of a physical file
+                    const gameBrain = map.get("fnaf 3.cch") || map.get("fnaf3.cch");
+                    
+                    if (!gameBrain) {
+                        throw new Error("Game data (fnaf 3.cch) not found inside the ZIP parts!");
+                    }
+
+                    new Runtime("MMFCanvas", gameBrain); 
                 };
                 script.onerror = () => {
                     document.getElementById('stage').innerHTML = "ERROR: COULD NOT LOAD RUNTIME.JS";
