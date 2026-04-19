@@ -1,0 +1,23 @@
+body {
+    background-color: #000;
+    color: #fff;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    font-family: Arial, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+}
+
+#progress-container {
+    text-align: center;
+    width: 300px;
+}
+
+#download-bar, #extract-bar {
+    height: 10px;
+    width: 0%;
+    transition: width 0.2s;
+}
