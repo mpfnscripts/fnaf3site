@@ -4,11 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Five Nights at Freddy's 4</title>
-    <link rel="icon" href="favicon.ico" />
     <style>
         html { display: block; background: #000; -webkit-user-select: none; user-select: none; overflow: hidden; height: 100%; }
         body { position: relative; background-color: black; display: flex; align-items: center; justify-content: center; margin: 0; height: 100%; color: white; font-family: monospace; }
-        canvas { display: none; }
+        canvas { display: none; image-rendering: pixelated; }
         .loader { position: absolute; display: flex; flex-direction: column; align-items: center; z-index: 5; text-align: center; width: 85vw; }
         #bar-container { width: 100%; border: 1px solid #333; height: 4px; margin: 10px 0; }
         #bar { background: white; width: 0%; height: 100%; transition: width 0.1s; }
@@ -33,9 +32,8 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
     <script>
-        const totalParts = 20;
-        const blobMap = new Map();
-        const urlMap = new Map();
+        window.blobMap = new Map();
+        window.urlMap = new Map();
 
         function updateProgress(text, percent) {
             document.getElementById('percentage').innerText = percent + '%';
@@ -46,30 +44,29 @@
         async function start() {
             try {
                 let chunks = [];
-                // 1. Download the 20 zip parts
-                for (let i = 1; i <= totalParts; i++) {
-                    updateProgress(`LOADING PART ${i}`, Math.floor((i / totalParts) * 40));
+                for (let i = 1; i <= 20; i++) {
+                    updateProgress(`FETCHING DATA ${i}`, Math.floor((i / 20) * 40));
                     const res = await fetch(`resources.zip.part${i}`);
-                    if (!res.ok) throw new Error(`Part ${i} failed to download.`);
+                    if (!res.ok) throw new Error("Part " + i + " failed.");
                     chunks.push(await res.arrayBuffer());
                 }
 
-                updateProgress("EXTRACTING", 50);
+                updateProgress("DECOMPRESSING", 50);
                 const zip = await JSZip.loadAsync(new Blob(chunks));
                 const files = Object.keys(zip.files);
                 
-                // 2. Map files to Blobs and local URLs
                 for (let i = 0; i < files.length; i++) {
                     const file = zip.files[files[i]];
-                    if (!file.dir) {
-                        const name = files[i].split('/').pop();
-                        const data = await file.async("uint8array");
-                        const type = name.endsWith('.png') ? 'image/png' : 'application/octet-stream';
-                        const blob = new Blob([data], { type: type });
-                        blobMap.set(name, blob);
-                        urlMap.set(name, URL.createObjectURL(blob));
-                    }
-                    updateProgress("MAPPING", 50 + Math.floor((i / files.length) * 45));
+                    if (file.dir) continue;
+
+                    const name = files[i].split('/').pop();
+                    const data = await file.async("uint8array");
+                    
+                    const type = name.endsWith('.png') ? 'image/png' : 'application/octet-stream';
+                    const blob = new Blob([data], { type: type });
+                    
+                    window.blobMap.set(name, blob);
+                    window.urlMap.set(name, URL.createObjectURL(blob));
                 }
 
                 document.getElementById('loader-ui').style.display = 'none';
@@ -81,24 +78,28 @@
             }
         }
 
-        // --- INTERCEPTORS ---
-        const ogFetch = window.fetch;
+        // --- IMPROVED INTERCEPTORS ---
+        const originalFetch = window.fetch;
         window.fetch = async (input, init) => {
             const url = typeof input === 'string' ? input : input.url;
             const name = url.split('/').pop();
-            if (blobMap.has(name)) {
-                const response = new Response(blobMap.get(name));
-                Object.defineProperty(response, 'url', { value: url });
-                return response;
+            
+            if (window.blobMap.has(name)) {
+                return new Response(window.blobMap.get(name), {
+                    status: 200,
+                    statusText: 'OK',
+                    headers: { 'Content-Type': name.endsWith('.png') ? 'image/png' : 'application/octet-stream' }
+                });
             }
-            return ogFetch(input, init);
+            return originalFetch(input, init);
         };
 
         const originalOpen = XMLHttpRequest.prototype.open;
         XMLHttpRequest.prototype.open = function(method, url) {
-            this._url = url.toString();
-            const name = this._url.split('/').pop();
-            if (urlMap.has(name)) url = urlMap.get(name);
+            const name = url.toString().split('/').pop();
+            if (window.urlMap.has(name)) {
+                url = window.urlMap.get(name);
+            }
             return originalOpen.apply(this, [method, url]);
         };
 
@@ -107,51 +108,46 @@
             const img = new OriginalImage();
             const setter = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src').set;
             Object.defineProperty(img, 'src', {
-                set: function(url) {
-                    const name = url.toString().split('/').pop();
-                    if (urlMap.has(name)) setter.call(this, urlMap.get(name));
-                    else setter.call(this, url);
+                set: function(val) {
+                    const name = val.toString().split('/').pop();
+                    if (window.urlMap.has(name)) {
+                        setter.call(this, window.urlMap.get(name));
+                    } else {
+                        setter.call(this, val);
+                    }
                 }
             });
             return img;
         };
 
-        // --- AUDIO ENGINE RESCUE ---
-        function forceUnlockAudio() {
-            const contexts = [];
-            const AC = window.AudioContext || window.webkitAudioContext;
-            if (AC) contexts.push(new AC());
-            for (let key in window) {
-                if (window[key] instanceof AC) contexts.push(window[key]);
-            }
-            contexts.forEach(ctx => {
-                if (ctx.state === 'suspended') ctx.resume();
-            });
-        }
-
-        // --- START GAME CLICK ---
         document.getElementById('play-button').onclick = function() {
             document.getElementById('play-zone').style.display = 'none';
             document.getElementById('MMFCanvas').style.display = 'block';
 
-            forceUnlockAudio();
+            // Audio Unlock
+            const AC = window.AudioContext || window.webkitAudioContext;
+            if (AC) { const ctx = new AC(); ctx.resume(); }
 
             const script = document.createElement('script');
             script.src = 'Runtime.js';
             script.onload = () => {
-                window.resourcesPath = "";
-                // Find the .cch data file automatically
-                const cchFile = Array.from(urlMap.keys()).find(f => f.toLowerCase().endsWith('.cch'));
-                
-                // Fallback attempt to unlock audio after engine starts
-                setTimeout(forceUnlockAudio, 1000);
+                // Find the .cch file
+                const cchFile = Array.from(window.urlMap.keys()).find(f => f.toLowerCase().endsWith('.cch'));
                 
                 if (cchFile) {
-                    // Pass the BLOB URL of the .cch file to the Runtime
-                    new Runtime("MMFCanvas", urlMap.get(cchFile));
+                    const dataUrl = window.urlMap.get(cchFile);
+                    console.log("Launching Game Data:", cchFile);
+                    
+                    // We pass the BLOB URL directly. 
+                    // If it fails with "File Not Found", the engine might not support Blobs for the main CCH.
+                    // In that case, we fall back to the filename and let the XHR interceptor handle it.
+                    try {
+                        new Runtime("MMFCanvas", dataUrl);
+                    } catch(e) {
+                        new Runtime("MMFCanvas", cchFile);
+                    }
                 } else {
-                    // If no .cch is in the zip, it tries to fetch fnaf4.cch from the server
-                    new Runtime("MMFCanvas", "fnaf4.cch");
+                    alert("No .cch file found in zip!");
                 }
             };
             document.head.appendChild(script);
