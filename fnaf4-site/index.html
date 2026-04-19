@@ -12,7 +12,6 @@
         .selection { height: 100vh; width: 100%; display: flex; overflow: hidden; position: relative; z-index: 2; }
         .launcher-text { position: absolute; left: 50%; transform: translate(-50%, 0); bottom: 2.5vh; z-index: 3; cursor: pointer; }
         .vignette { position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 4; }
-        
         .glitch { position: absolute; background-image: url(resources/background.gif); background-position: center; background-size: 50vw; top: 0; left: 0; width: 100vw; height: 100vh; pointer-events: none; opacity: 0.15; z-index: 1; }
         
         canvas { display: none; user-select: none; position: absolute; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 10; }
@@ -22,7 +21,7 @@
 
         .loader { position: absolute; display: flex; flex-direction: column; align-items: center; left: 50%; transform: translate(-50%, 0); bottom: 12vh; z-index: 5; color: white; font-family: monospace; text-align: center; width: 85vw; }
         .loader h1 { margin: 0; font-size: 5vw; text-shadow: 0 0 10px red; }
-        #bar { margin: 10px 0; border: white solid 1px; width: 0%; height: 2px; transition: width 0.2s; }
+        #bar { margin: 10px 0; border: white solid 1px; width: 0%; height: 2px; transition: width 0.2s; background: red; }
         #stage { font-size: 1.4vw; color: #aaa; text-transform: uppercase; }
 
         #play-button { 
@@ -63,8 +62,8 @@
         const totalParts = 20;
         const blobMap = new Map();
         const urlMap = new Map();
-        const runtimePath = "src/Runtime.js";
-        const cchFile = "resources/fnaf 4.cch";
+        // Updated paths to look in the current folder instead of src/
+        const runtimePath = "Runtime.js"; 
 
         function updateProgress(text, percent) {
             document.getElementById('percentage').innerText = percent + '%';
@@ -75,15 +74,14 @@
         async function init() {
             try {
                 let chunks = [];
-                // 1. Load Parts
+                // Load Parts from root folder
                 for (let i = 1; i <= totalParts; i++) {
                     updateProgress(`LOCATING ARCHIVE (PART ${i})`, Math.floor((i / totalParts) * 40));
-                    const res = await fetch(`src/resources.zip.part${i}`);
+                    const res = await fetch(`resources.zip.part${i}`);
                     if (!res.ok) throw new Error("Missing Part " + i);
                     chunks.push(await res.arrayBuffer());
                 }
 
-                // 2. Unpack
                 updateProgress("BOOTING UP ARCHIVE...", 50);
                 const zip = await JSZip.loadAsync(new Blob(chunks));
                 const files = Object.keys(zip.files).filter(name => !zip.files[name].dir);
@@ -99,17 +97,17 @@
                     updateProgress("MAPPING MEMORY...", 50 + Math.floor((i / files.length) * 45));
                 }
 
-                // 3. Reveal Play Button
                 updateProgress("READY", 100);
                 document.getElementById('loader-ui').style.display = 'none';
                 document.getElementById('play-button').style.display = 'block';
 
             } catch (err) {
                 document.getElementById('stage').innerHTML = `<span style="color:red">ERROR: ${err.message}</span>`;
+                console.error(err);
             }
         }
 
-        // --- GLOBAL INTERCEPTORS ---
+        // Interceptors
         const ogFetch = window.fetch;
         window.fetch = async (input, init) => {
             const url = typeof input === 'string' ? input : input.url;
@@ -129,7 +127,6 @@
             return ogOpen.apply(this, arguments);
         };
 
-        // --- AUDIO UNLOCKER ---
         function unlockAudio() {
             const AC = window.AudioContext || window.webkitAudioContext;
             if (!AC) return;
@@ -149,7 +146,7 @@
                 window.resourcesPath = ""; 
                 const actualCch = Array.from(urlMap.keys()).find(f => f.toLowerCase().endsWith('.cch')) || "fnaf 4.cch";
                 new Runtime("MMFCanvas", actualCch);
-                setTimeout(unlockAudio, 2000); // Back-up unlock
+                setTimeout(unlockAudio, 2000); 
             };
             document.head.appendChild(script);
         };
